@@ -17,6 +17,8 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
   List<OeLibraryEntry> _entries = [];
   bool _busy = false;
   String? _error;
+  Uint8List? _failedBytes;
+  String? _failedName;
   @override
   void initState() {
     super.initState();
@@ -36,6 +38,8 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
     setState(() {
       _busy = true;
       _error = null;
+      _failedBytes = null;
+      _failedName = null;
     });
     try {
       Uint8List bytes;
@@ -59,7 +63,14 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
         bytes = await readOeOriginal(entry);
         name = entry.name;
       }
-      final recording = await compute(OeRecording.parse, bytes);
+      OeRecording recording;
+      try {
+        recording = await compute(OeRecording.parse, bytes);
+      } on FormatException {
+        _failedBytes = bytes;
+        _failedName = name;
+        rethrow;
+      }
       if (entry == null) {
         await saveOeOriginal(
           OeLibraryEntry(name, recording.digest, bytes.length),
@@ -104,6 +115,33 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
               SelectableText(
                 _error!,
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            if (_failedBytes != null)
+              TextButton(
+                onPressed: _busy
+                    ? null
+                    : () async {
+                        setState(() => _busy = true);
+                        try {
+                          final recording = await compute(
+                              OeRecording.inspectPrefix, _failedBytes!,);
+                          if (!context.mounted) return;
+                          await Navigator.of(context)
+                              .push(MaterialPageRoute<void>(
+                            builder: (_) => OeViewerPage(
+                                name: _failedName!, recording: recording,),
+                          ),);
+                        } catch (e) {
+                          if (mounted) {
+                            setState(
+                                () => _error = 'Prefix inspection blocked: $e',);
+                          }
+                        } finally {
+                          if (mounted) setState(() => _busy = false);
+                        }
+                      },
+                child: const Text(
+                    'Inspect parsed prefix · unparsed tail',),
               ),
             const SizedBox(height: 12),
             Text(

@@ -93,3 +93,24 @@ and host-observed arrival age. These are UI snapshots, not a display of every
 sample. Once the rolling window is empty, the UI reports no samples in that
 window. The separate system-audio graph reports its existing normalized 0–1
 level, not raw PCM or calibrated sound pressure.
+
+## Explicit partial interpretation
+
+Strict import still rejects malformed packets. After rejection, an explicit
+`Inspect parsed prefix · unparsed tail` action can inspect complete packets
+accepted before the first error. It never scans forward to guess another
+boundary. Header errors remain fatal. The full original bytes and their hash
+are retained; the viewer prominently reports the stopping offset and number
+of uninterpreted bytes. Plots, counts and derived audio cover only that prefix.
+The original export includes the tail unchanged. WAV provenance records the
+parse error and prefix boundary. This temporary view is not added to the
+complete-recording library. A parse failure alone does not establish whether
+the source file is corrupt or the format is unsupported.
+
+An exact duplicated suffix is recognized automatically only at a packet parse
+failure: every remaining byte must equal the immediately preceding block of
+identical length (at least 10 bytes). This does not repair the source or assert
+a firmware cause. The original full file is saved and hashed; a visible notice
+and exported provenance disclose the duplicate boundary. The repeated bytes
+are not counted again. Other malformed tails still require explicit partial
+inspection and are never silently discarded.

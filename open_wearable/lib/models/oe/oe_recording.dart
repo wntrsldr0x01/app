@@ -15,6 +15,20 @@ class OeRecording {
   final String deviceId;
   final int side;
   final Map<int, OeSensor> sensors;
+  final String? incompleteReason;
+  final int validatedBytes;
+
+  bool get hasExactDuplicatedTail =>
+      incompleteReason != null && _isExactDuplicatedTail(bytes, validatedBytes);
+
+  static bool _isExactDuplicatedTail(Uint8List bytes, int boundary) {
+    final length = bytes.length - boundary;
+    if (length < 10 || length > boundary) return false;
+    for (var i = 0; i < length; i++) {
+      if (bytes[boundary + i] != bytes[boundary - length + i]) return false;
+    }
+    return true;
+  }
 
   OeRecording._(
     this.bytes,
@@ -23,12 +37,20 @@ class OeRecording {
     this.deviceId,
     this.side,
     this.sensors,
+    this.incompleteReason,
+    this.validatedBytes,
   );
 
   static const maxFileBytes = 128 * 1024 * 1024;
 
   /// Rejects incomplete, ambiguous or unsupported records with a byte offset.
-  static OeRecording parse(Uint8List source) {
+  static OeRecording parse(Uint8List source) => _parse(source, false);
+
+  /// Explicit inspection of complete packets before the first malformed packet.
+  /// Original bytes are retained, including the unparsed remainder.
+  static OeRecording inspectPrefix(Uint8List source) => _parse(source, true);
+
+  static OeRecording _parse(Uint8List source, bool allowPrefix) {
     if (source.length > maxFileBytes) {
       throw const FormatException(
         'Files larger than 128 MiB are not supported.',
@@ -125,33 +147,53 @@ class OeRecording {
       );
     }
     info.end();
+    String? incompleteReason;
+    var validatedBytes = r.offset;
     while (r.remaining > 0) {
-      final offset = r.offset;
-      r.require(10);
-      final sid = r.u8();
-      final size = r.u8();
-      final time = r.timestamp();
-      final sensor = sensors[sid];
-      if (sensor == null) r.fail('Packet references unknown sensor $sid');
-      if (size == 0) r.fail('Empty packet');
-      r.require(size);
-      var dataSize = size;
-      int? delta;
-      if (sensor.isPcm) {
-        if (size % sensor.frameSize != 0) r.fail('Incomplete stereo PCM frame');
-      } else if (size != sensor.frameSize) {
-        if (size < sensor.frameSize + 2 || (size - 2) % sensor.frameSize != 0) {
-          r.fail('Payload length disagrees with sensor scheme');
+      try {
+        final offset = r.offset;
+        r.require(10);
+        final sid = r.u8();
+        final size = r.u8();
+        final sensor = sensors[sid];
+        if (sensor == null) {
+          throw FormatException(
+            'Packet references undeclared sensor ID $sid. Packet boundary or file data may be invalid; no bytes were skipped.',
+            null,
+            offset,
+          );
         }
-        dataSize -= 2;
-        delta = r.data.getUint16(r.offset + dataSize, Endian.little);
+        final time = r.timestamp();
+        if (size == 0) r.fail('Empty packet');
+        r.require(size);
+        var dataSize = size;
+        int? delta;
+        if (sensor.isPcm) {
+          if (size % sensor.frameSize != 0) {
+            r.fail('Incomplete stereo PCM frame');
+          }
+        } else if (size != sensor.frameSize) {
+          if (size < sensor.frameSize + 2 ||
+              (size - 2) % sensor.frameSize != 0) {
+            r.fail('Payload length disagrees with sensor scheme');
+          }
+          dataSize -= 2;
+          delta = r.data.getUint16(r.offset + dataSize, Endian.little);
+        }
+        final frames = dataSize ~/ sensor.frameSize;
+        sensor._packets.add(
+          OePacket(offset, r.offset, time, frames, sensor.frameCount, delta),
+        );
+        sensor._frameCount += frames;
+        r.offset += size;
+        validatedBytes = r.offset;
+      } on FormatException catch (error) {
+        if (!allowPrefix && !_isExactDuplicatedTail(bytes, validatedBytes)) {
+          rethrow;
+        }
+        incompleteReason = '$error';
+        break;
       }
-      final frames = dataSize ~/ sensor.frameSize;
-      sensor._packets.add(
-        OePacket(offset, r.offset, time, frames, sensor.frameCount, delta),
-      );
-      sensor._frameCount += frames;
-      r.offset += size;
     }
     return OeRecording._(
       bytes,
@@ -160,6 +202,8 @@ class OeRecording {
       device,
       side,
       Map.unmodifiable(sensors),
+      incompleteReason,
+      validatedBytes,
     );
   }
 

@@ -90,6 +90,9 @@ class _OeViewerPageState extends State<OeViewerPage> {
         'source_name': widget.name,
         'source_sha256': widget.recording.digest,
         'source_bytes': widget.recording.bytes.length,
+        'incomplete_reason': widget.recording.incompleteReason,
+        'exact_duplicated_tail': widget.recording.hasExactDuplicatedTail,
+        'validated_prefix_bytes': widget.recording.validatedBytes,
         'oe_version': 3,
         'device_id_hex': widget.recording.deviceId,
         'side_raw': widget.recording.side,
@@ -133,6 +136,23 @@ class _OeViewerPageState extends State<OeViewerPage> {
         padding: const EdgeInsets.all(12),
         children: [
           Text(widget.name, style: Theme.of(context).textTheme.titleLarge),
+          if (r.incompleteReason != null)
+            _card(
+                r.hasExactDuplicatedTail
+                    ? 'Exact duplicated file tail detected'
+                    : 'PARTIAL INTERPRETATION · unparsed tail',
+                [
+                  SelectableText(
+                    'Parsing stopped at byte ${r.validatedBytes}. ${r.bytes.length - r.validatedBytes} trailing bytes are retained in the original but NOT interpreted.\n${r.incompleteReason}',
+                  ),
+                  if (r.hasExactDuplicatedTail)
+                    Text(
+                        'The last ${r.bytes.length - r.validatedBytes} bytes exactly repeat the immediately preceding bytes. They are retained in the original and are not counted again as samples. No original bytes have been removed. The cause of the repeated write is not verified.',)
+                  else
+                    Text(
+                      'The cause of the unparsed tail is not established. All counts, plots, tables and audio below cover only packets accepted before that boundary. No resynchronization, skipped bytes or repaired samples. Sharing the original preserves the entire file. This inspection is temporary and is not saved as a complete library entry.',
+                    ),
+                ]),
           _card('Original copy · SHA-256 checked', [
             SelectableText(
               '${r.bytes.length} bytes · OE v3\nDevice 0x${r.deviceId} · side ${r.side == 0 ? 'left' : r.side == 1 ? 'right' : 'unknown (${r.side})'}\nHeader timestamp: ${r.timestampUs} µs (clock origin not verified)\nSHA-256: ${r.digest}',
