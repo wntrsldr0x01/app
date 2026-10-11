@@ -144,3 +144,39 @@ separate hash-keyed annotation JSON files. They are labeled as user-entered and
 never written into, or used to reinterpret, the original OE bytes. The library
 shows a cached header date/side and these labels. Existing verified originals
 are indexed on first use to populate their metadata.
+
+## Linked sensor comparison workspace
+
+`Compare sensors · shared time axis` opens all recorded sensors with selectable
+axes, grouped by sensor/component group/unit. Different units are never placed
+on an unlabeled common Y axis. Stable axis colors, stacked/two-column layouts,
+linked cursors, exact start/end entry, overview range selection, drag-to-zoom,
+10 s / 1 s / 100 ms presets and half-window panning support comparison. Y limits
+can be locked with a visible clipping notice; Fit all resets them.
+
+The origin is the earliest original packet timestamp in the file. Unbuffered
+samples retain packet times. Buffered non-audio sample times follow the official
+Python decoder's convention: `packet_timestamp + (frame_index + 1) * stored_delta`.
+These are explicitly labeled derived times, not separately measured timestamps.
+Microphone frames stay grouped at their containing packet timestamp; their
+within-packet timing is unknown on this shared timeline. The separate audio
+viewer still provides explicitly rate-assumed playback. A common device clock
+within one file does not establish cross-device synchronization or sensor latency.
+
+All finite values contribute to at most 900 time-bin extrema per selected axis.
+Non-finite values are counted, not replaced. Empty bins stay empty. Only adjacent
+individual source samples with forward time and a small interval get connecting
+visual guides. Packet jumps above five times the median positive packet interval
+are highlighted as a heuristic, not asserted data loss. Repeated/backward packet
+times are reported. Original files and numerical values remain unchanged.
+
+SVG export includes visible min/max envelopes and JSON provenance with the
+source hash, time origin/window, channel selection, timing assumptions, counts,
+Y limits and any partial-file status. Exported envelopes do not include cursor,
+time-jump shading or connecting visual guides.
+
+Design references: Plotly's [range selector](https://plotly.com/python/range-slider/)
+and [multiple-axis guidance](https://plotly.com/python/multiple-axes/).
+Timing checked against OpenEarable firmware `BoneConduction.cpp` / `PPG.cpp`
+and open-wearables 0.2.1 `parsing/stream.py::_flatten_values` (which increments
+by `t_delta` before emitting each buffered sample).

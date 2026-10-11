@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'oe_sonification_panel.dart';
 import 'oe_log_info.dart';
+import 'oe_timeline_page.dart';
 import 'dart:math' as math;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
@@ -165,6 +166,14 @@ class _OeViewerPageState extends State<OeViewerPage> {
       body: ListView(
         padding: const EdgeInsets.all(12),
         children: [
+          FilledButton.icon(
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+              builder: (_) => OeTimelinePage(recording: r, name: widget.name),
+            ),),
+            icon: const Icon(Icons.stacked_line_chart),
+            label: const Text('Compare sensors · shared time axis'),
+          ),
+          const SizedBox(height: 8),
           OeLogInfo(recording: r, filename: widget.name),
           if (r.incompleteReason != null)
             _card(

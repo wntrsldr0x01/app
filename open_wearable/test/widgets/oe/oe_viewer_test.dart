@@ -20,6 +20,7 @@ void main() {
     );
     await tester.pump();
     expect(find.text('Original copy · SHA-256 checked'), findsOneWidget);
+    await tester.scrollUntilVisible(find.textContaining('NOT a recorded active-rate setting'), 300, scrollable: find.byType(Scrollable).first);
     expect(
       find.textContaining('NOT a recorded active-rate setting'),
       findsOneWidget,
