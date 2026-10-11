@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_platform_widgets/flutter_platform_widgets.dart';
 import 'package:open_earable_flutter/open_earable_flutter.dart' hide logger;
@@ -127,6 +128,16 @@ class _SensorChartState extends State<SensorChart> {
     final sensorValues = widget.settings.liveUpdatesEnabled
         ? dataProvider.sensorValues
         : Queue<SensorValue>();
+    final latest = sensorValues.isEmpty ? null : sensorValues.last;
+    final List<num> latestValues = latest is SensorDoubleValue
+        ? latest.values
+        : latest is SensorIntValue
+            ? latest.values
+            : const <num>[];
+    final latestValueLabel = [
+      for (var i = 0; i < sensor.axisNames.length; i++)
+        '${sensor.axisNames[i]}: ${i < latestValues.length ? latestValues[i] : "missing"} ${i < sensor.axisUnits.length ? sensor.axisUnits[i] : ""}',
+    ].join('   ·   ');
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final compactMode = widget.compactMode;
@@ -340,6 +351,32 @@ class _SensorChartState extends State<SensorChart> {
             ),
           ),
         ),
+        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.macOS)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  !widget.settings.liveUpdatesEnabled
+                      ? 'Live display disabled'
+                      : sensorValues.isEmpty
+                          ? 'No samples in the current window · ${dataProvider.receivedSampleCount} received this session'
+                          : '${dataProvider.receivedSampleCount} samples received this session · last arrival ${dataProvider.lastArrivalAge!.inMilliseconds} ms ago · sensor timestamp ${sensorValues.last.timestamp} (10^${sensor.timestampExponent} s units)',
+                  style: theme.textTheme.labelSmall,
+                ),
+                if (sensorValues.isNotEmpty)
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Text(
+                      'Latest received (before graph filters): $latestValueLabel',
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(fontFamily: 'RobotoMono'),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.only(top: 6),
           child: LayoutBuilder(

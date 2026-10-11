@@ -1,5 +1,6 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_platform_widgets/flutter_platform_widgets.dart';
 import 'package:open_earable_flutter/open_earable_flutter.dart';
 import 'package:open_wearable/models/audio_input_availability.dart';
@@ -626,6 +627,18 @@ class _AudioLevelChart extends StatelessWidget {
             ),
           ),
         ),
+        if (!kIsWeb && defaultTargetPlatform == TargetPlatform.macOS)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              !settings.liveUpdatesEnabled
+                  ? 'Live display disabled'
+                  : waveformData.isEmpty
+                      ? 'No audio level available'
+                      : 'Latest buffered audio level: ${waveformData.last} (normalized 0–1; not raw PCM or calibrated sound pressure)',
+              style: theme.textTheme.labelSmall,
+            ),
+          ),
         Padding(
           padding: const EdgeInsets.only(top: 6),
           child: LayoutBuilder(

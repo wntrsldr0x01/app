@@ -84,3 +84,12 @@ remain unchanged. Output rate is not asserted to be the acquisition rate.
 The conversion's source peak, exact formula, sample count and duration are
 shown before playback. This feature plays existing recorded acceleration;
 it does not enable additional sensors or alter device recording settings.
+
+## Mac live readouts
+
+Live sensor graphs also show the latest received axis values and units before
+any graph filters, the provider-session sample count, original sensor timestamp
+and host-observed arrival age. These are UI snapshots, not a display of every
+sample. Once the rolling window is empty, the UI reports no samples in that
+window. The separate system-audio graph reports its existing normalized 0–1
+level, not raw PCM or calibrated sound pressure.

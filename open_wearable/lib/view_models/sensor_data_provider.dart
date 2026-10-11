@@ -35,6 +35,13 @@ class SensorDataProvider with ChangeNotifier {
   final Duration _throttleDuration = const Duration(milliseconds: 15);
   final Duration _staleDataInterval = const Duration(milliseconds: 100);
 
+  /// Number of sensor samples received since this provider was created.
+  int receivedSampleCount = 0;
+
+  Duration? get lastArrivalAge => _lastSensorArrivalTime == null
+      ? null
+      : DateTime.now().difference(_lastSensorArrivalTime!);
+
   int? _lastSensorTimestamp;
   DateTime? _lastSensorArrivalTime;
 
@@ -71,6 +78,7 @@ class SensorDataProvider with ChangeNotifier {
       sensor: sensor,
     ).listen((sensorValue) {
       sensorValues.add(sensorValue);
+      receivedSampleCount++;
       _lastSensorTimestamp = sensorValue.timestamp;
       _lastSensorArrivalTime = DateTime.now();
       _pruneStaleValues(referenceTimestamp: sensorValue.timestamp);
