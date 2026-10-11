@@ -13,8 +13,12 @@ void main() {
     await tester.pumpWidget(MaterialApp(home:OeSpectrumPage(recording:r,name:'test.oe',sensorId:2,channel:0)));
     expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton,'Compute FFT power spectrum')).onPressed,isNull);
     await tester.enterText(find.widgetWithText(TextField,'Assumed sample rate (Hz)'),'24000');
+    await tester.ensureVisible(find.byType(CheckboxListTile));
+    await tester.pumpAndSettle();
     await tester.tap(find.byType(CheckboxListTile));
     await tester.pump();
+    await tester.ensureVisible(find.text('Compute FFT power spectrum'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Compute FFT power spectrum'));
     await tester.pump();
     for (var i = 0; i < 30 && find.byType(LinearProgressIndicator).evaluate().isNotEmpty; i++) {
@@ -24,6 +28,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('1024 samples'),findsOneWidget);
     expect(tester.takeException(),isNull);
+    await tester.ensureVisible(find.widgetWithText(TextField,'Assumed sample rate (Hz)'));
     await tester.enterText(find.widgetWithText(TextField,'Assumed sample rate (Hz)'),'25000');
     await tester.pump();
     expect(find.textContaining('1024 samples'),findsNothing);

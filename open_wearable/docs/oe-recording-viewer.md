@@ -214,3 +214,19 @@ References: [SciPy periodogram scaling](https://docs.scipy.org/doc/scipy/referen
 and [librosa mel concepts](https://librosa.org/doc/0.11.0/generated/librosa.feature.melspectrogram.html).
 The explicitly defined mel integration above is not claimed to equal librosa's
 default Slaney-normalized output.
+
+## Desktop workspace layout
+
+The library has search across filenames, hashes and user annotations, ear filters,
+clock-based date sorting, and a persistent comparison selection bar. Selection is
+retained when filtering; the selected count includes hidden entries. Date labels
+retain their clock-interpretation caveat. Opening and comparing still verifies
+original bytes as before.
+
+Frequency analysis uses a scrollable settings sidebar above 1050 px of workspace
+width and a single-column layout below it. Source interpretation warnings remain
+visible; the full hash and timing method are expandable. The chart has cursor
+guides and the mel display uses a sequential purple/blue/green/yellow palette.
+Comparison sources are expandable so charts appear sooner. Workspaces are capped
+at 1560 px for readable controls on wide monitors. These changes do not modify
+FFT, mel, timestamp, or source-value calculations.

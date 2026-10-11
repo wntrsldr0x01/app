@@ -1,3 +1,4 @@
+import 'oe_workspace.dart';
 import 'oe_spectrum_page.dart';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -252,7 +253,7 @@ class _OeTimelinePageState extends State<OeTimelinePage> {
             onPressed: _busy || plot == null ? null : _export,
             icon: const Icon(Icons.ios_share),),
       ],),
-      body: Column(children: [
+      body: OeWorkspace(child: Column(children: [
         Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
             child:
@@ -341,7 +342,7 @@ class _OeTimelinePageState extends State<OeTimelinePage> {
               ],);
             },),
         ],),),
-      ],),
+      ],),),
     );
   }
 
