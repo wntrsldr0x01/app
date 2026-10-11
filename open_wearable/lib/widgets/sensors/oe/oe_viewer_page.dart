@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:async';
 import 'oe_sonification_panel.dart';
+import 'oe_log_info.dart';
 import 'dart:math' as math;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
@@ -164,7 +165,7 @@ class _OeViewerPageState extends State<OeViewerPage> {
       body: ListView(
         padding: const EdgeInsets.all(12),
         children: [
-          Text(widget.name, style: Theme.of(context).textTheme.titleLarge),
+          OeLogInfo(recording: r, filename: widget.name),
           if (r.incompleteReason != null)
             _card(
                 r.hasExactDuplicatedTail

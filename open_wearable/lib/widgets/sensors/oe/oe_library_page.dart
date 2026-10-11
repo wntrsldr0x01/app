@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:open_wearable/models/oe/oe_recording.dart';
 import 'oe_library_entry.dart';
+import 'package:open_wearable/models/oe/oe_metadata.dart';
 import 'oe_library_storage.dart';
 import 'oe_viewer_page.dart';
 
@@ -16,6 +17,7 @@ class OeLibraryPage extends StatefulWidget {
 class _OeLibraryPageState extends State<OeLibraryPage> {
   List<OeLibraryEntry> _entries = [];
   bool _busy = false;
+  Map<String, Map<String, String>> _annotations = {};
   String? _error;
   Uint8List? _failedBytes;
   String? _failedName;
@@ -28,7 +30,28 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
   Future<void> _reload() async {
     try {
       final entries = await listOeOriginals();
-      if (mounted) setState(() => _entries = entries);
+      for (var i = 0; i < entries.length; i++) {
+        final entry = entries[i];
+        if (entry.timestampUs != null) continue;
+        final bytes = await readOeOriginal(entry);
+        final recording = await compute(OeRecording.parse, bytes);
+        final enriched = OeLibraryEntry(entry.name, entry.digest, entry.size,
+            timestampUs: recording.timestampUs,
+            side: recording.side,
+            deviceId: recording.deviceId,);
+        await saveOeOriginal(enriched, bytes);
+        entries[i] = enriched;
+      }
+      final annotations = <String, Map<String, String>>{};
+      for (final entry in entries) {
+        annotations[entry.digest] = await readOeAnnotations(entry.digest);
+      }
+      if (mounted) {
+        setState(() {
+          _entries = entries;
+          _annotations = annotations;
+        });
+      }
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
     }
@@ -71,9 +94,12 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
         _failedName = name;
         rethrow;
       }
-      if (entry == null) {
+      if (entry == null || entry.timestampUs == null) {
         await saveOeOriginal(
-          OeLibraryEntry(name, recording.digest, bytes.length),
+          OeLibraryEntry(name, recording.digest, bytes.length,
+              timestampUs: recording.timestampUs,
+              side: recording.side,
+              deviceId: recording.deviceId,),
           bytes,
         );
         await _reload();
@@ -84,6 +110,7 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
           builder: (_) => OeViewerPage(name: name, recording: recording),
         ),
       );
+      await _reload();
     } catch (e) {
       if (mounted) setState(() => _error = 'Import/view blocked: $e');
     } finally {
@@ -124,24 +151,31 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
                         setState(() => _busy = true);
                         try {
                           final recording = await compute(
-                              OeRecording.inspectPrefix, _failedBytes!,);
+                            OeRecording.inspectPrefix,
+                            _failedBytes!,
+                          );
                           if (!context.mounted) return;
-                          await Navigator.of(context)
-                              .push(MaterialPageRoute<void>(
-                            builder: (_) => OeViewerPage(
-                                name: _failedName!, recording: recording,),
-                          ),);
+                          await Navigator.of(context).push(
+                            MaterialPageRoute<void>(
+                              builder: (_) => OeViewerPage(
+                                name: _failedName!,
+                                recording: recording,
+                              ),
+                            ),
+                          );
                         } catch (e) {
                           if (mounted) {
                             setState(
-                                () => _error = 'Prefix inspection blocked: $e',);
+                              () => _error = 'Prefix inspection blocked: $e',
+                            );
                           }
                         } finally {
                           if (mounted) setState(() => _busy = false);
                         }
                       },
                 child: const Text(
-                    'Inspect parsed prefix · unparsed tail',),
+                  'Inspect parsed prefix · unparsed tail',
+                ),
               ),
             const SizedBox(height: 12),
             Text(
@@ -153,9 +187,12 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
             for (final entry in _entries)
               Card(
                 child: ListTile(
-                  title: Text(entry.name),
+                  title: Text(
+                      (_annotations[entry.digest]?['label'] ?? '').isEmpty
+                          ? entry.name
+                          : _annotations[entry.digest]!['label']!,),
                   subtitle: Text(
-                    '${entry.size} bytes · SHA-256 ${entry.digest.substring(0, 12)}…',
+                    '${entry.name}\n${oeEarLabel(entry.side)} · ${oeDateLabel(entry.timestampUs)}\nPlace: ${(_annotations[entry.digest]?["place"] ?? "").isEmpty ? "not recorded / not entered" : "${_annotations[entry.digest]!["place"]} (user-entered)"}\n${entry.size} bytes · SHA-256 ${entry.digest.substring(0, 12)}…',
                   ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _busy ? null : () => _open(entry: entry),

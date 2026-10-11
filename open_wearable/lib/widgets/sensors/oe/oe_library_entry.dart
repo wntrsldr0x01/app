@@ -2,5 +2,8 @@
 class OeLibraryEntry {
   final String name, digest;
   final int size;
-  const OeLibraryEntry(this.name, this.digest, this.size);
+  final int? timestampUs, side;
+  final String? deviceId;
+  const OeLibraryEntry(this.name, this.digest, this.size,
+      {this.timestampUs, this.side, this.deviceId,});
 }

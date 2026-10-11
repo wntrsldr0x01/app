@@ -31,7 +31,14 @@ Future<void> saveOeOriginal(OeLibraryEntry entry, Uint8List bytes) async {
   final pending = File('${meta.path}.pending');
   await pending.writeAsString(
     jsonEncode(
-      {'name': entry.name, 'sha256': entry.digest, 'size': bytes.length},
+      {
+        'name': entry.name,
+        'sha256': entry.digest,
+        'size': bytes.length,
+        'timestamp_us': entry.timestampUs,
+        'side': entry.side,
+        'device_id': entry.deviceId,
+      },
     ),
     flush: true,
   );
@@ -49,7 +56,10 @@ Future<List<OeLibraryEntry>> listOeOriginals() async {
     if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(hash)) {
       throw const FormatException('Invalid stored OE digest');
     }
-    entries.add(OeLibraryEntry(m['name'] as String, hash, m['size'] as int));
+    entries.add(OeLibraryEntry(m['name'] as String, hash, m['size'] as int,
+        timestampUs: m['timestamp_us'] as int?,
+        side: m['side'] as int?,
+        deviceId: m['device_id'] as String?,),);
   }
   entries.sort((a, b) => a.name.compareTo(b.name));
   return entries;
@@ -70,4 +80,28 @@ Future<Uint8List> readOeOriginal(OeLibraryEntry entry) async {
     throw StateError('Stored original checksum changed. Viewing blocked.');
   }
   return bytes;
+}
+
+Future<File> _annotationFile(String digest) async {
+  if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(digest)) {
+    throw const FormatException('Invalid digest');
+  }
+  final root = await _directory();
+  final directory =
+      await Directory('${root.path}/annotations').create(recursive: true);
+  return File('${directory.path}/$digest.json');
+}
+
+Future<Map<String, String>> readOeAnnotations(String digest) async {
+  final file = await _annotationFile(digest);
+  if (!await file.exists()) return {};
+  return Map<String, String>.from(jsonDecode(await file.readAsString()) as Map);
+}
+
+Future<void> saveOeAnnotations(
+    String digest, Map<String, String> values,) async {
+  final file = await _annotationFile(digest);
+  final pending = File('${file.path}.pending');
+  await pending.writeAsString(jsonEncode(values), flush: true);
+  await pending.rename(file.path);
 }

@@ -128,3 +128,19 @@ still retain every finite sample's min/max. At individual-sample zoom, adjacent
 finite points are joined as visual guides; the line is not measured data
 between samples. Fit-all, 300-sample inspection and a five-second window at
 the playback position provide quick navigation.
+
+## Metadata and human labels
+
+Recording details expose header identity, ear side, per-sensor packet/frame
+counts (including declared sensors with no samples), byte size, parse status
+and the range of original packet timestamps. Calendar dates are explicitly
+Unix-microsecond interpretations, not proof of clock synchronization. Device
+uptime-like values outside 2000–2100 are not shown as recording dates. Both UTC
+and this Mac's local timezone are identified; no acquisition timezone is inferred.
+
+OE v3 headers here contain no place/GPS, active-rate setting or firmware version.
+A session name, place and notes can be entered by the user and are stored in
+separate hash-keyed annotation JSON files. They are labeled as user-entered and
+never written into, or used to reinterpret, the original OE bytes. The library
+shows a cached header date/side and these labels. Existing verified originals
+are indexed on first use to populate their metadata.
