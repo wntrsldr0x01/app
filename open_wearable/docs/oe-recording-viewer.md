@@ -114,3 +114,17 @@ a firmware cause. The original full file is saved and hashed; a visible notice
 and exported provenance disclose the duplicate boundary. The repeated bytes
 are not counted again. Other malformed tails still require explicit partial
 inspection and are never silently discarded.
+
+## Recorded microphone transport and chart
+
+The microphone transport appears above the waveform and requires an explicit
+rate. It supports play from the beginning, pause/resume, stop, seek, and output
+volume. Volume affects playback only; WAV export retains original PCM bytes.
+The chart uses sample index until a rate is selected, then labels seconds as
+assumed playback time (concatenated samples, not reconstructed packet time).
+The playhead follows the audio player's reported position. Hover displays the
+exact selected sample, units and containing packet timestamp. Overview bins
+still retain every finite sample's min/max. At individual-sample zoom, adjacent
+finite points are joined as visual guides; the line is not measured data
+between samples. Fit-all, 300-sample inspection and a five-second window at
+the playback position provide quick navigation.

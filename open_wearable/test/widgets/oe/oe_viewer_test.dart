@@ -35,6 +35,34 @@ void main() {
     );
     expect(button.onPressed, isNull);
     expect(find.textContaining('unverified assumption'), findsOneWidget);
+    await Scrollable.ensureVisible(
+        tester.element(find.byKey(const ValueKey('rate-2'))),
+        alignment: 0.5,);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('rate-2')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('24000 Hz').last);
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Play selected channel'),
+          )
+          .onPressed,
+      isNotNull,
+    );
+    expect(find.textContaining('Playback: stopped'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Inspect 300 samples'),
+      400,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pump();
+    expect(
+      find.text('Recorded waveform · assumed playback time'),
+      findsOneWidget,
+    );
+
     expect(tester.takeException(), isNull);
   });
 }

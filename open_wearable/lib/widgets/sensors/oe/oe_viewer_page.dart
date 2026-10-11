@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'oe_sonification_panel.dart';
 import 'dart:math' as math;
 import 'package:audioplayers/audioplayers.dart';
@@ -19,6 +20,30 @@ class OeViewerPage extends StatefulWidget {
 
 class _OeViewerPageState extends State<OeViewerPage> {
   AudioPlayer? _player;
+  final List<StreamSubscription<dynamic>> _audioSubscriptions = [];
+  PlayerState _audioState = PlayerState.stopped;
+  Duration _audioPosition = Duration.zero;
+  double _volume = 1;
+  int? _hoverFrame;
+
+  AudioPlayer _ensurePlayer() {
+    if (_player != null) return _player!;
+    final player = _player = AudioPlayer();
+    _audioSubscriptions.add(player.onPositionChanged.listen((position) {
+      if (mounted) setState(() => _audioPosition = position);
+    }),);
+    _audioSubscriptions.add(player.onPlayerStateChanged.listen((state) {
+      if (mounted) setState(() => _audioState = state);
+    }),);
+    return player;
+  }
+
+  void _resetAudio() {
+    _player?.stop();
+    _audioPosition = Duration.zero;
+    _audioState = PlayerState.stopped;
+  }
+
   late final List<OeSensor> _sensors =
       widget.recording.sensors.values.where((s) => s.frameCount > 0).toList();
   int _sensorIndex = 0, _channel = 0, _first = 0;
@@ -41,6 +66,9 @@ class _OeViewerPageState extends State<OeViewerPage> {
 
   @override
   void dispose() {
+    for (final subscription in _audioSubscriptions) {
+      subscription.cancel();
+    }
     _player?.dispose();
     _sampleController.dispose();
     super.dispose();
@@ -53,7 +81,8 @@ class _OeViewerPageState extends State<OeViewerPage> {
   }
 
   void _change(VoidCallback update) {
-    _player?.stop();
+    _resetAudio();
+    _hoverFrame = null;
     setState(() {
       update();
       _refreshPlot();
@@ -147,7 +176,8 @@ class _OeViewerPageState extends State<OeViewerPage> {
                   ),
                   if (r.hasExactDuplicatedTail)
                     Text(
-                        'The last ${r.bytes.length - r.validatedBytes} bytes exactly repeat the immediately preceding bytes. They are retained in the original and are not counted again as samples. No original bytes have been removed. The cause of the repeated write is not verified.',)
+                      'The last ${r.bytes.length - r.validatedBytes} bytes exactly repeat the immediately preceding bytes. They are retained in the original and are not counted again as samples. No original bytes have been removed. The cause of the repeated write is not verified.',
+                    )
                   else
                     Text(
                       'The cause of the unparsed tail is not established. All counts, plots, tables and audio below cover only packets accepted before that boundary. No resynchronization, skipped bytes or repaired samples. Sharing the original preserves the entire file. This inspection is temporary and is not saved as a complete library entry.',
@@ -259,84 +289,8 @@ class _OeViewerPageState extends State<OeViewerPage> {
             'Microphone display: signed int16 PCM, as used by the firmware. Its header may declare uint16. The table exposes both interpretations of the same bits. These counts are not calibrated sound pressure.',
           ),
       ]),
-      _card('Waveform · sample index', [
-        const Text(
-          'Each vertical bar shows the exact minimum and maximum of its sample bin. Bars are not connected. Zoom to individual samples; no smoothing or rate-based time axis is applied.',
-        ),
-        FutureBuilder<OePlot>(
-          future: _plot,
-          builder: (context, snapshot) {
-            if (snapshot.hasError) {
-              return Text('Plot failed: ${snapshot.error}');
-            }
-            if (snapshot.connectionState != ConnectionState.done ||
-                !snapshot.hasData) {
-              return const SizedBox(
-                height: 260,
-                child: Center(child: CircularProgressIndicator()),
-              );
-            }
-            final p = snapshot.data!;
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Frames $_start–${_end - 1} · ${p.bins.length} bins · ${p.nonFiniteCount} non-finite values excluded from graph',
-                ),
-                if (p.bins.isEmpty)
-                  const Text('No finite values to plot.')
-                else ...[
-                  Text(
-                    'Minimum ${p.min} · maximum ${p.max} ${s.isPcm ? 'signed PCM counts' : c.unit}',
-                  ),
-                  SizedBox(
-                    height: 260,
-                    width: double.infinity,
-                    child: CustomPaint(
-                      painter: _EnvelopePainter(
-                        p,
-                        _start,
-                        _end,
-                        Theme.of(context).colorScheme.primary,
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            );
-          },
-        ),
-        Text('Zoom: ${_zoom.toStringAsFixed(0)}×'),
-        Slider(
-          value: math.log(_zoom) / math.ln10,
-          min: 0,
-          max: math.log(math.max(1, s.frameCount).toDouble()) / math.ln10,
-          onChanged: (v) => setState(() {
-            _zoom = math.pow(10, v).toDouble();
-            _plot = null;
-          }),
-          onChangeEnd: (_) => setState(_refreshPlot),
-        ),
-        const Text('Position in recording'),
-        Slider(
-          value: _position,
-          onChanged: (v) => setState(() {
-            _position = v;
-            _plot = null;
-          }),
-          onChangeEnd: (_) => setState(_refreshPlot),
-        ),
-      ]),
-      _card('Packet timing · original clock', [
-        SelectableText(
-          'First packet: ${packets.first.timestampUs} µs\nLast packet: ${packets.last.timestampUs} µs\nFirst-to-last packet span: $span µs (excludes unknown final packet duration)\nLargest forward packet interval: $maxInterval µs\nBackward transitions: $backwards · repeated timestamps: $duplicates',
-        ),
-        const Text(
-          'Packet timing can contain jitter, gaps or clock changes. No timestamps are sorted, gaps filled, or per-sample times invented. Inspect individual packet timestamps in the table below.',
-        ),
-      ]),
       if (s.isPcm)
-        _card('Audio playback · derived interpretation', [
+        _card('Microphone playback · ${c.name}', [
           const Text(
             'The active sample rate is not stored in this header. Choose a rate only if you know it. This changes playback speed and duration; it does not verify the recording rate. Samples play in file order, with packet gaps omitted.',
           ),
@@ -358,7 +312,7 @@ class _OeViewerPageState extends State<OeViewerPage> {
             onChanged: _busy
                 ? null
                 : (v) {
-                    _player?.stop();
+                    _resetAudio();
                     setState(() => _rate = v);
                   },
           ),
@@ -379,14 +333,34 @@ class _OeViewerPageState extends State<OeViewerPage> {
                             (widget.recording, s.id, _channel, _rate!),
                           );
                           if (!mounted) return;
-                          await (_player ??= AudioPlayer())
+                          final player = _ensurePlayer();
+                          await player.setVolume(_volume);
+                          await player
                               .play(BytesSource(bytes, mimeType: 'audio/wav'));
                         }),
                 icon: const Icon(Icons.play_arrow),
                 label: const Text('Play selected channel'),
               ),
+              TextButton.icon(
+                onPressed: _busy ||
+                        (_audioState != PlayerState.playing &&
+                            _audioState != PlayerState.paused)
+                    ? null
+                    : () => _action(() async {
+                          if (_audioState == PlayerState.playing) {
+                            await _player?.pause();
+                          } else {
+                            await _player?.resume();
+                          }
+                        }),
+                icon: Icon(_audioState == PlayerState.paused
+                    ? Icons.play_arrow
+                    : Icons.pause,),
+                label: Text(
+                    _audioState == PlayerState.paused ? 'Resume' : 'Pause',),
+              ),
               TextButton(
-                onPressed: () => _player?.stop(),
+                onPressed: () => setState(_resetAudio),
                 child: const Text('Stop'),
               ),
               TextButton(
@@ -422,7 +396,183 @@ class _OeViewerPageState extends State<OeViewerPage> {
               ),
             ],
           ),
+          Text(
+              'Playback: ${_audioState.name} · ${(_audioPosition.inMilliseconds / 1000).toStringAsFixed(2)} s'
+              '${_rate == null ? "" : " / ${(s.frameCount / _rate!).toStringAsFixed(2)} s"}'),
+          Slider(
+            value: _rate == null
+                ? 0
+                : (_audioPosition.inMicroseconds / 1e6)
+                    .clamp(0, s.frameCount / _rate!)
+                    .toDouble(),
+            max: _rate == null ? 1 : s.frameCount / _rate!,
+            label: 'Playback position',
+            onChanged: _busy ||
+                    _rate == null ||
+                    (_audioState != PlayerState.playing &&
+                        _audioState != PlayerState.paused)
+                ? null
+                : (seconds) => _action(() async {
+                      await _player?.seek(
+                          Duration(microseconds: (seconds * 1e6).round()),);
+                    }),
+          ),
+          Row(children: [
+            Text('Listening volume: ${(_volume * 100).round()}%'),
+            Expanded(
+                child: Slider(
+                    value: _volume,
+                    onChanged: (value) {
+                      setState(() => _volume = value);
+                      _player?.setVolume(value);
+                    },),),
+          ],),
+          const Text(
+              'Listening volume affects speaker output only; exported PCM and chart values are unchanged.',),
         ]),
+      _card(
+          _rate == null
+              ? 'Recorded waveform · sample index'
+              : 'Recorded waveform · assumed playback time',
+          [
+            const Text(
+              'Overview bars retain the exact minimum and maximum of every sample bin. Zoom to individual samples to see a line trace; the connecting lines are visual guides. Hover to inspect an exact value. A seconds axis uses only your chosen playback rate and omits packet gaps.',
+            ),
+            FutureBuilder<OePlot>(
+              future: _plot,
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return Text('Plot failed: ${snapshot.error}');
+                }
+                if (snapshot.connectionState != ConnectionState.done ||
+                    !snapshot.hasData) {
+                  return const SizedBox(
+                    height: 260,
+                    child: Center(child: CircularProgressIndicator()),
+                  );
+                }
+                final p = snapshot.data!;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Frames $_start–${_end - 1} · ${p.bins.length} bins · ${p.nonFiniteCount} non-finite values excluded from graph',
+                    ),
+                    if (p.bins.isEmpty)
+                      const Text('No finite values to plot.')
+                    else ...[
+                      Text(
+                        'Minimum ${p.min} · maximum ${p.max} ${s.isPcm ? 'signed PCM counts' : c.unit}',
+                      ),
+                      SizedBox(
+                        height: 260,
+                        width: double.infinity,
+                        child: LayoutBuilder(
+                            builder: (context, constraints) => MouseRegion(
+                                onExit: (_) =>
+                                    setState(() => _hoverFrame = null),
+                                onHover: (event) {
+                                  final fraction =
+                                      ((event.localPosition.dx - 78) /
+                                              math.max(
+                                                  1, constraints.maxWidth - 90,))
+                                          .clamp(0.0, 1.0);
+                                  setState(() => _hoverFrame = _start +
+                                      (fraction *
+                                              math.max(0, _end - _start - 1))
+                                          .round(),);
+                                },
+                                child: CustomPaint(
+                                  painter: _EnvelopePainter(
+                                    p,
+                                    _start,
+                                    _end,
+                                    Theme.of(context).colorScheme.primary,
+                                    rate: _rate,
+                                    cursorFrame: _hoverFrame ??
+                                        (s.isPcm &&
+                                                _rate != null &&
+                                                _audioState !=
+                                                    PlayerState.stopped
+                                            ? (_audioPosition.inMicroseconds /
+                                                    1e6 *
+                                                    _rate!)
+                                                .floor()
+                                            : null),
+                                  ),
+                                ),),),
+                      ),
+                    ],
+                  ],
+                );
+              },
+            ),
+            if (_hoverFrame != null &&
+                _hoverFrame! >= _start &&
+                _hoverFrame! < _end)
+              SelectableText(
+                  'Frame $_hoverFrame · ${c.label}: ${widget.recording.value(s, widget.recording.packetForFrame(s, _hoverFrame!), _hoverFrame! - widget.recording.packetForFrame(s, _hoverFrame!).firstFrame, _channel)} ${s.isPcm ? "signed PCM counts" : c.unit} · packet timestamp ${widget.recording.packetForFrame(s, _hoverFrame!).timestampUs} µs',),
+            Wrap(spacing: 8, children: [
+              TextButton(
+                  onPressed: () => setState(() {
+                        _zoom = 1;
+                        _position = 0;
+                        _hoverFrame = null;
+                        _refreshPlot();
+                      }),
+                  child: const Text('Fit entire recording'),),
+              TextButton(
+                  onPressed: () => setState(() {
+                        _zoom = math.max(1, s.frameCount / 300);
+                        _hoverFrame = null;
+                        _refreshPlot();
+                      }),
+                  child: const Text('Inspect 300 samples'),),
+              if (s.isPcm && _rate != null)
+                TextButton(
+                    onPressed: () => setState(() {
+                          _zoom = math.max(1, s.frameCount / (_rate! * 5));
+                          final frame =
+                              (_audioPosition.inMicroseconds / 1e6 * _rate!)
+                                  .floor();
+                          _position = s.frameCount == _window
+                              ? 0
+                              : (frame / (s.frameCount - _window))
+                                  .clamp(0.0, 1.0);
+                          _hoverFrame = null;
+                          _refreshPlot();
+                        }),
+                    child: const Text('View 5 s at playback position'),),
+            ],),
+            Text('Zoom: ${_zoom.toStringAsFixed(0)}×'),
+            Slider(
+              value: math.log(_zoom) / math.ln10,
+              min: 0,
+              max: math.log(math.max(1, s.frameCount).toDouble()) / math.ln10,
+              onChanged: (v) => setState(() {
+                _zoom = math.pow(10, v).toDouble();
+                _plot = null;
+              }),
+              onChangeEnd: (_) => setState(_refreshPlot),
+            ),
+            const Text('Position in recording'),
+            Slider(
+              value: _position,
+              onChanged: (v) => setState(() {
+                _position = v;
+                _plot = null;
+              }),
+              onChangeEnd: (_) => setState(_refreshPlot),
+            ),
+          ]),
+      _card('Packet timing · original clock', [
+        SelectableText(
+          'First packet: ${packets.first.timestampUs} µs\nLast packet: ${packets.last.timestampUs} µs\nFirst-to-last packet span: $span µs (excludes unknown final packet duration)\nLargest forward packet interval: $maxInterval µs\nBackward transitions: $backwards · repeated timestamps: $duplicates',
+        ),
+        const Text(
+          'Packet timing can contain jitter, gaps or clock changes. No timestamps are sorted, gaps filled, or per-sample times invented. Inspect individual packet timestamps in the table below.',
+        ),
+      ]),
       if (!kIsWeb &&
           defaultTargetPlatform == TargetPlatform.macOS &&
           c.group.toUpperCase() == 'ACCELEROMETER')
@@ -525,7 +675,9 @@ class _EnvelopePainter extends CustomPainter {
   final OePlot plot;
   final int start, end;
   final Color color;
-  _EnvelopePainter(this.plot, this.start, this.end, this.color);
+  final int? rate, cursorFrame;
+  _EnvelopePainter(this.plot, this.start, this.end, this.color,
+      {this.rate, this.cursorFrame,});
   @override
   void paint(Canvas canvas, Size size) {
     const left = 78.0, top = 12.0, bottom = 28.0;
@@ -537,7 +689,11 @@ class _EnvelopePainter extends CustomPainter {
         ? top + h / 2
         : top +
             ((max / scale) - (v / scale)) / ((max / scale) - (min / scale)) * h;
-    for (final v in [max, min]) {
+    for (var tick = 0; tick <= 4; tick++) {
+      final fraction = tick / 4;
+      final v = min * (1 - fraction) + max * fraction;
+      canvas.drawLine(Offset(left, y(v)), Offset(left + w, y(v)),
+          Paint()..color = color.withValues(alpha: .12),);
       final label = TextPainter(
         text: TextSpan(
           text: v.toStringAsPrecision(5),
@@ -557,22 +713,53 @@ class _EnvelopePainter extends CustomPainter {
         Paint()..color = color.withValues(alpha: .2),
       );
     }
+    Offset? previous;
+    int? previousFrame;
     for (final b in plot.bins) {
       final x = left +
           ((b.firstFrame + b.lastFrame) / 2 - start) /
               math.max(1, end - start - 1) *
               w;
       canvas.drawLine(Offset(x, y(b.min)), Offset(x, y(b.max)), paint);
-      if (b.min == b.max) canvas.drawCircle(Offset(x, y(b.min)), 1.5, paint);
+      if (b.firstFrame == b.lastFrame) {
+        final point = Offset(x, y(b.min));
+        if (previous != null && previousFrame == b.firstFrame - 1) {
+          canvas.drawLine(previous, point, paint);
+        }
+        canvas.drawCircle(point, 2, paint);
+        previous = point;
+        previousFrame = b.lastFrame;
+      }
     }
-    final label = TextPainter(
-      text: TextSpan(
-        text: 'Frame $start → ${end - 1}',
-        style: TextStyle(color: color, fontSize: 12),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout(maxWidth: w);
-    label.paint(canvas, Offset(left, size.height - bottom + 6));
+    for (var tick = 0; tick <= 4; tick++) {
+      final fraction = tick / 4;
+      final frame = start + (math.max(0, end - start - 1) * fraction).round();
+      final x = left + fraction * w;
+      canvas.drawLine(Offset(x, top), Offset(x, top + h),
+          Paint()..color = color.withValues(alpha: .12),);
+      final label = TextPainter(
+          text: TextSpan(
+              text: rate == null
+                  ? '$frame'
+                  : '${(frame / rate!).toStringAsFixed(3)} s',
+              style: TextStyle(color: color, fontSize: 10),),
+          textDirection: TextDirection.ltr,)
+        ..layout();
+      label.paint(
+          canvas,
+          Offset((x - label.width / 2).clamp(0, size.width - label.width),
+              size.height - bottom + 6,),);
+    }
+    if (cursorFrame != null && cursorFrame! >= start && cursorFrame! < end) {
+      final x =
+          left + (cursorFrame! - start) / math.max(1, end - start - 1) * w;
+      canvas.drawLine(
+          Offset(x, top),
+          Offset(x, top + h),
+          Paint()
+            ..color = color
+            ..strokeWidth = 2,);
+    }
   }
 
   @override
@@ -580,7 +767,9 @@ class _EnvelopePainter extends CustomPainter {
       old.plot != plot ||
       old.color != color ||
       old.start != start ||
-      old.end != end;
+      old.end != end ||
+      old.rate != rate ||
+      old.cursorFrame != cursorFrame;
 }
 
 OePlot _buildPlot((OeRecording, int, int, int, int) args) =>
