@@ -1,3 +1,4 @@
+import 'package:open_wearable/models/app_display_name.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_platform_widgets/flutter_platform_widgets.dart';
 import 'package:go_router/go_router.dart';
@@ -269,7 +270,7 @@ class _AppRailLogo extends StatelessWidget {
         height: 32,
         fit: BoxFit.cover,
         filterQuality: FilterQuality.medium,
-        semanticLabel: 'OpenWearables app icon',
+        semanticLabel: '$appDisplayName app icon',
       ),
     );
 
@@ -283,7 +284,7 @@ class _AppRailLogo extends StatelessWidget {
         icon,
         const SizedBox(width: 12),
         Text(
-          'OpenWearables',
+          appDisplayName,
           style: Theme.of(context).textTheme.titleMedium,
         ),
       ],

@@ -1,3 +1,4 @@
+import 'package:open_wearable/models/app_display_name.dart';
 import 'dart:async';
 
 import 'package:flutter/gestures.dart';
@@ -60,7 +61,7 @@ class PermissionsWelcomePage extends StatelessWidget {
                         ),
                         const SizedBox(height: 20),
                         Text(
-                          'Welcome to OpenWearables',
+                          'Welcome to $appDisplayName',
                           style: theme.textTheme.headlineSmall?.copyWith(
                             fontWeight: FontWeight.w700,
                           ),
@@ -68,7 +69,7 @@ class PermissionsWelcomePage extends StatelessWidget {
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          'OpenWearables supports research and development of the next generation wearable applications by helping you connect devices, inspect live sensor data, and record synchronized sessions.',
+                          '$appDisplayName supports research and development of the next generation wearable applications by helping you connect devices, inspect live sensor data, and record synchronized sessions.',
                           style: theme.textTheme.bodyMedium,
                           textAlign: TextAlign.center,
                         ),
@@ -149,9 +150,9 @@ class _SupportEmailTextState extends State<_SupportEmailText> {
       TextSpan(
         style: widget.style,
         children: [
-          const TextSpan(
+          TextSpan(
             text:
-                'Thank you for trusting OpenWearables. If you have any questions or run into problems, reach out to ',
+                'Thank you for trusting $appDisplayName. If you have any questions or run into problems, reach out to ',
           ),
           TextSpan(
             text: 'info@openwearables.com',

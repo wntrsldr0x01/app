@@ -1,3 +1,4 @@
+import 'package:open_wearable/models/app_display_name.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_platform_widgets/flutter_platform_widgets.dart';
 import 'package:go_router/go_router.dart';
@@ -117,7 +118,7 @@ class _OverviewWorkflowIntroCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'How the OpenWearables App Works',
+              'How $appDisplayName Works',
               style: theme.textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.w700,
               ),

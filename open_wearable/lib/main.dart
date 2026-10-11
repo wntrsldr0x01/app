@@ -1,3 +1,4 @@
+import 'package:open_wearable/models/app_display_name.dart';
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -1026,7 +1027,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               DefaultWidgetsLocalizations.delegate,
               DefaultCupertinoLocalizations.delegate,
             ],
-            title: 'OpenWearables',
+            title: appDisplayName,
           ),
         ),
       ),

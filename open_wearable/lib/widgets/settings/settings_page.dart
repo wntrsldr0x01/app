@@ -1,3 +1,4 @@
+import 'package:open_wearable/models/app_display_name.dart';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
@@ -157,7 +158,7 @@ class _AboutPageState extends State<_AboutPage> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          'OpenWearables App',
+                          appDisplayName,
                           style: theme.textTheme.titleMedium?.copyWith(
                             fontWeight: FontWeight.w700,
                           ),
