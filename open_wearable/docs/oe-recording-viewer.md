@@ -69,3 +69,18 @@ The importer currently limits files to 128 MiB to bound memory use on phones.
 It retains the original bytes and packet indices instead of expanding all
 samples into boxed objects. Parsing, plot aggregation and WAV generation run
 outside the UI isolate on native platforms.
+
+## Mac accelerometer sonification
+
+On macOS only, a recorded component whose header group is `ACCELEROMETER`
+gets a synthetic-audio panel. The entire selected axis is processed in file
+order, one value per audio frame. The user must explicitly choose an output
+rate and peak level. Conversion is `round(value / max(abs(values)) * level *
+32767)` to mono signed 16-bit PCM; all-zero input produces silence. Non-finite
+values cause rejection, never omission. No DC removal, filtering, resampling,
+or gap padding occurs. This is not calibrated audio, and physical amplitudes
+cannot be compared between peak-scaled recordings. Original values and plots
+remain unchanged. Output rate is not asserted to be the acquisition rate.
+The conversion's source peak, exact formula, sample count and duration are
+shown before playback. This feature plays existing recorded acceleration;
+it does not enable additional sensors or alter device recording settings.

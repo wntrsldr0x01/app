@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'oe_sonification_panel.dart';
 import 'dart:math' as math;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
@@ -402,6 +403,15 @@ class _OeViewerPageState extends State<OeViewerPage> {
             ],
           ),
         ]),
+      if (!kIsWeb &&
+          defaultTargetPlatform == TargetPlatform.macOS &&
+          c.group.toUpperCase() == 'ACCELEROMETER')
+        OeSonificationPanel(
+          key: ValueKey('sonification-${s.id}-$_channel'),
+          recording: widget.recording,
+          sensor: s,
+          channel: _channel,
+        ),
       _card('Exact sample inspector', [
         TextField(
           controller: _sampleController,
