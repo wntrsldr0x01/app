@@ -1,3 +1,4 @@
+import '../oe/oe_library_page.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -318,6 +319,21 @@ class _LocalRecorderViewState extends State<LocalRecorderView> {
             child: ListView(
               padding: SensorPageSpacing.pagePaddingWithBottomInset(context),
               children: [
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.file_open),
+                    title: const Text('Recorded OE logs'),
+                    subtitle: const Text(
+                      'Import and inspect original SD-card recordings',
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const OeLibraryPage(),
+                      ),
+                    ),
+                  ),
+                ),
                 LocalRecorderRecordingCard(
                   isRecording: isRecording,
                   hasSensorsConnected: recorder.hasSensorsConnected,
