@@ -1,3 +1,4 @@
+import 'oe_spectrum_page.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'oe_sonification_panel.dart';
@@ -299,6 +300,7 @@ class _OeViewerPageState extends State<OeViewerPage> {
             'Microphone display: signed int16 PCM, as used by the firmware. Its header may declare uint16. The table exposes both interpretations of the same bits. These counts are not calibrated sound pressure.',
           ),
       ]),
+      OutlinedButton.icon(onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => OeSpectrumPage(recording: widget.recording, name: widget.name, sensorId: s.id, channel: _channel, firstFrame: _first))), icon: const Icon(Icons.graphic_eq), label: const Text('FFT / audio mel-spectrogram')),
       if (s.isPcm)
         _card('Microphone playback · ${c.name}', [
           const Text(

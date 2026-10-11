@@ -180,3 +180,37 @@ and [multiple-axis guidance](https://plotly.com/python/multiple-axes/).
 Timing checked against OpenEarable firmware `BoneConduction.cpp` / `PPG.cpp`
 and open-wearables 0.2.1 `parsing/stream.py::_flatten_values` (which increments
 by `t_delta` before emitting each buffered sample).
+
+## Frequency analysis and multi-log comparison
+
+Every recorded channel exposes **FFT**; microphone channels also expose
+**mel-spectrogram**. Originals are never modified. Users must supply a sample
+rate and acknowledge the uniform sample-order assumption. Header defaults are
+not active recording rates. Non-PCM interval mismatches are reported; audio
+packet timestamps do not establish within-packet timing. No resampling, gap
+filling, or silent sample deletion occurs. Non-finite input blocks analysis.
+
+FFT uses a periodic Hann window, optional mean removal, and one-sided PSD:
+`|FFT|² / (fs × sum(window²))`, doubling interior bins only. The explicit
+zero-based start frame and FFT size select one window, not a whole-log average.
+The display floor is peak−100 dB; exported PSD retains full numerical values.
+
+Mel uses 64 HTK-spaced unit-height triangular filters, 0 to Nyquist, applied to
+PSD and integrated with `df`. Output is weighted band power:
+`10 log10(power / 1 native-unit²)` with −300 dB numerical floor, **not dB SPL**.
+Hop is N/4, with no padding. At most 512 consecutive windows per view; change
+start frame to inspect another portion. Color spans peak−80 to peak. Columns
+represent windows centered at `(first + t×hop + N/2)/fs`. Rows represent mel
+filter centers. Export contains full PSD/mel values, source hash and settings.
+
+Library checkboxes select any number of stored logs, limited by memory. Matching
+channels are arranged together with optional common Y limits, shared time
+windows and linked cursors. Elapsed alignment independently zeroes each earliest
+packet; recorded-clock alignment uses a common integer origin. Neither asserts
+synchronization. Per-log display offsets never change original timestamps.
+Each log's hash and interpretation status remain visible.
+
+References: [SciPy periodogram scaling](https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.periodogram.html)
+and [librosa mel concepts](https://librosa.org/doc/0.11.0/generated/librosa.feature.melspectrogram.html).
+The explicitly defined mel integration above is not claimed to equal librosa's
+default Slaney-normalized output.

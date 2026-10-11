@@ -1,3 +1,4 @@
+import 'oe_spectrum_page.dart';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
@@ -501,6 +502,12 @@ class _OeTimelinePageState extends State<OeTimelinePage> {
                               : _fixedY[panel.key] = panel.limits;
                         }),),
               ],),
+              Wrap(spacing: 8, children: [for (final series in panel.series)
+                TextButton.icon(icon: const Icon(Icons.graphic_eq), label: Text('FFT${panel.sensor.isPcm ? " / mel" : ""} · ${panel.sensor.components[series.channel].name}'),
+                  onPressed: () {
+                    final first = series.bins.isEmpty ? 0 : series.bins.map((b) => b.firstFrame).reduce(math.min);
+                    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => OeSpectrumPage(recording: widget.recording, name: widget.name, sensorId: series.sensorId, channel: series.channel, firstFrame: first)));
+                  },),],),
               Text(
                   '${panel.unit} · ${panel.sensor.isPcm ? 'Packet-timed audio envelope; no within-packet timing assumed' : timing.buffered ? 'Packet timestamp + stored per-sample Δ (derived)' : 'Original sample / packet timestamps'}',
                   style: Theme.of(context).textTheme.bodySmall,),

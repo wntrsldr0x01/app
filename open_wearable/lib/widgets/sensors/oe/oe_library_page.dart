@@ -1,3 +1,4 @@
+import 'oe_log_comparison_page.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -17,6 +18,7 @@ class OeLibraryPage extends StatefulWidget {
 class _OeLibraryPageState extends State<OeLibraryPage> {
   List<OeLibraryEntry> _entries = [];
   bool _busy = false;
+  final Set<String> _selected = {};
   Map<String, Map<String, String>> _annotations = {};
   String? _error;
   Uint8List? _failedBytes;
@@ -35,10 +37,14 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
         if (entry.timestampUs != null) continue;
         final bytes = await readOeOriginal(entry);
         final recording = await compute(OeRecording.parse, bytes);
-        final enriched = OeLibraryEntry(entry.name, entry.digest, entry.size,
-            timestampUs: recording.timestampUs,
-            side: recording.side,
-            deviceId: recording.deviceId,);
+        final enriched = OeLibraryEntry(
+          entry.name,
+          entry.digest,
+          entry.size,
+          timestampUs: recording.timestampUs,
+          side: recording.side,
+          deviceId: recording.deviceId,
+        );
         await saveOeOriginal(enriched, bytes);
         entries[i] = enriched;
       }
@@ -96,10 +102,14 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
       }
       if (entry == null || entry.timestampUs == null) {
         await saveOeOriginal(
-          OeLibraryEntry(name, recording.digest, bytes.length,
-              timestampUs: recording.timestampUs,
-              side: recording.side,
-              deviceId: recording.deviceId,),
+          OeLibraryEntry(
+            name,
+            recording.digest,
+            bytes.length,
+            timestampUs: recording.timestampUs,
+            side: recording.side,
+            deviceId: recording.deviceId,
+          ),
           bytes,
         );
         await _reload();
@@ -113,6 +123,28 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
       await _reload();
     } catch (e) {
       if (mounted) setState(() => _error = 'Import/view blocked: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _compare() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final logs = <OeComparisonLog>[];
+      for (final entry in _entries.where((e) => _selected.contains(e.digest))) {
+        final bytes = await readOeOriginal(entry);
+        final recording = await compute(OeRecording.parse, bytes);
+        logs.add(OeComparisonLog(entry.name, recording));
+      }
+      if (!mounted) return;
+      await Navigator.of(context).push(MaterialPageRoute<void>(
+          builder: (_) => OeLogComparisonPage(logs: logs),),);
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Comparison blocked: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -133,6 +165,13 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
               icon: const Icon(Icons.file_open),
               label: const Text('Import .oe file'),
             ),
+            OutlinedButton.icon(
+              onPressed: _busy || _selected.length < 2 ? null : _compare,
+              icon: const Icon(Icons.compare),
+              label: Text('Compare selected logs (${_selected.length})'),
+            ),
+            const Text(
+                'Select two or more stored logs using the checkboxes. Import additional files above. No fixed log-count limit; available memory limits large comparisons.',),
             if (_busy)
               const Padding(
                 padding: EdgeInsets.all(16),
@@ -187,10 +226,22 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
             for (final entry in _entries)
               Card(
                 child: ListTile(
+                  leading: Checkbox(
+                      value: _selected.contains(entry.digest),
+                      onChanged: _busy
+                          ? null
+                          : (v) => setState(() {
+                                if (v!) {
+                                  _selected.add(entry.digest);
+                                } else {
+                                  _selected.remove(entry.digest);
+                                }
+                              }),),
                   title: Text(
-                      (_annotations[entry.digest]?['label'] ?? '').isEmpty
-                          ? entry.name
-                          : _annotations[entry.digest]!['label']!,),
+                    (_annotations[entry.digest]?['label'] ?? '').isEmpty
+                        ? entry.name
+                        : _annotations[entry.digest]!['label']!,
+                  ),
                   subtitle: Text(
                     '${entry.name}\n${oeEarLabel(entry.side)} · ${oeDateLabel(entry.timestampUs)}\nPlace: ${(_annotations[entry.digest]?["place"] ?? "").isEmpty ? "not recorded / not entered" : "${_annotations[entry.digest]!["place"]} (user-entered)"}\n${entry.size} bytes · SHA-256 ${entry.digest.substring(0, 12)}…',
                   ),
