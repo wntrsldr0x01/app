@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:open_earable_flutter/open_earable_flutter.dart' hide logger;
 
 import '../models/logger.dart';
+import 'sensor_experiment_controller.dart';
 import '../models/shared_sensor_configuration.dart';
 
 /// Summary of a profile/configuration restore attempt.
@@ -38,6 +39,8 @@ class SensorConfigurationRestoreResult {
 /// - Mutation APIs for option/value changes and sensor shutdown.
 class SensorConfigurationProvider with ChangeNotifier {
   final SensorConfigurationManager _sensorConfigurationManager;
+  final experiment = SensorExperimentController();
+  bool _disposed = false;
 
   final Map<SensorConfiguration, SensorConfigurationValue>
       _sensorConfigurations = {};
@@ -480,6 +483,63 @@ class SensorConfigurationProvider with ChangeNotifier {
     }
   }
 
+  /// Validate the entire payload before writing; wait for a fresh hardware report.
+  Future<void> applyExperimentProfile(Map<String, String> profile) async {
+    if (_disposed) throw StateError('Device disconnected');
+    if (profile.isEmpty) throw StateError('Profile has no compatible settings');
+    final entries = <(SensorConfiguration, SensorConfigurationValue)>[];
+    for (final entry in profile.entries) {
+      final config = _sensorConfigurationManager.sensorConfigurations
+          .where((c) => c.name == entry.key)
+          .firstOrNull;
+      final value =
+          config?.values.where((v) => v.key == entry.value).firstOrNull;
+      if (config == null || value == null) {
+        throw StateError('Unsupported experiment setting: ${entry.key}');
+      }
+      entries.add((config, value));
+    }
+    final confirmed = Completer<void>();
+    bool acceptingReports = false;
+    final subscription =
+        sharedSensorConfiguration(_sensorConfigurationManager).listen(
+      (report) {
+        if (acceptingReports &&
+            entries.every(
+              (entry) => report.entries.any(
+                (reported) =>
+                    _configurationIdentityKey(reported.key) ==
+                        _configurationIdentityKey(entry.$1) &&
+                    _configurationValuesMatch(reported.value, entry.$2),
+              ),
+            )) {
+          if (!confirmed.isCompleted) confirmed.complete();
+        }
+      },
+      onError: (Object error, StackTrace stack) {
+        if (!confirmed.isCompleted) confirmed.completeError(error, stack);
+      },
+      onDone: () {
+        if (!confirmed.isCompleted) {
+          confirmed.completeError(StateError('Device disconnected'));
+        }
+      },
+    );
+    try {
+      // Drain the shared stream’s cached replay before issuing new writes.
+      await Future<void>.delayed(Duration.zero);
+      if (_disposed) throw StateError('Device disconnected');
+      acceptingReports = true;
+      for (final entry in entries) {
+        addSensorConfiguration(entry.$1, entry.$2);
+        applyConfiguration(entry.$1, entry.$2);
+      }
+      await confirmed.future.timeout(const Duration(seconds: 10));
+    } finally {
+      await subscription.cancel();
+    }
+  }
+
   Map<String, String> toJson() {
     return _sensorConfigurations.map(
       (config, value) => MapEntry(config.name, value.key),
@@ -569,6 +629,8 @@ class SensorConfigurationProvider with ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
+    experiment.dispose();
     _sensorConfigurationSubscription?.cancel();
     super.dispose();
   }

@@ -1,4 +1,5 @@
 import 'oe_workspace.dart';
+import 'package:open_wearable/models/oe/oe_pairing.dart';
 import 'package:open_wearable/models/oe/oe_metadata.dart';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
@@ -17,7 +18,9 @@ class OeComparisonLog {
 
 class OeLogComparisonPage extends StatefulWidget {
   final List<OeComparisonLog> logs;
-  const OeLogComparisonPage({super.key, required this.logs});
+  final bool leftRight;
+  const OeLogComparisonPage(
+      {super.key, required this.logs, this.leftRight = false,});
   @override
   State<OeLogComparisonPage> createState() => _OeLogComparisonPageState();
 }
@@ -41,6 +44,7 @@ class _OeLogComparisonPageState extends State<OeLogComparisonPage> {
   @override
   void initState() {
     super.initState();
+    _clock = widget.leftRight;
     _channels = [
       for (final log in widget.logs)
         {
@@ -129,127 +133,139 @@ class _OeLogComparisonPageState extends State<OeLogComparisonPage> {
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(title: Text('Compare ${widget.logs.length} logs')),
         body: OeWorkspace(
-            child: ListView(
-          children: [
-            const Text(
-              'Shared time window · original values · separate panels for every channel. No resampling or automatic clock synchronization.',
-            ),
-            SwitchListTile(
-              title: const Text('Align recorded device clocks'),
-              subtitle: Text(
-                _clock
-                    ? 'Subtract a common integer timestamp origin ($_origin µs). Matching clocks do NOT establish synchronization.'
-                    : 'Elapsed alignment: each log starts at its earliest packet, independently. This compares event shapes, not simultaneous real-world time.',
+          child: ListView(
+            children: [
+              if (widget.leftRight)
+                Card(
+                    child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: SelectableText(OePairing.assess(
+                          widget.logs[0].recording, widget.logs[1].recording,)
+                      .description,),
+                ),),
+              const Text(
+                'Shared time window · original values · separate panels for every channel. No resampling or automatic clock synchronization.',
               ),
-              value: _clock,
-              onChanged: _busy
-                  ? null
-                  : (v) => setState(() {
-                        _clock = v;
-                        _fit();
-                      }),
-            ),
-            SwitchListTile(
-              title: const Text(
-                'Use common Y scales for matching channel labels and units',
+              SwitchListTile(
+                title: const Text('Align recorded device clocks'),
+                subtitle: Text(
+                  _clock
+                      ? 'Subtract a common integer timestamp origin ($_origin µs). Matching clocks do NOT establish synchronization.'
+                      : 'Elapsed alignment: each log starts at its earliest packet, independently. This compares event shapes, not simultaneous real-world time.',
+                ),
+                value: _clock,
+                onChanged: _busy
+                    ? null
+                    : (v) => setState(() {
+                          _clock = v;
+                          _fit();
+                        }),
               ),
-              subtitle: const Text(
-                'Matching labels do not prove matching calibration.',
+              SwitchListTile(
+                title: const Text(
+                  'Use common Y scales for matching channel labels and units',
+                ),
+                subtitle: const Text(
+                  'Matching labels do not prove matching calibration.',
+                ),
+                value: _sameScale,
+                onChanged: (v) => setState(() => _sameScale = v),
               ),
-              value: _sameScale,
-              onChanged: (v) => setState(() => _sameScale = v),
-            ),
-            Wrap(
-              spacing: 12,
-              runSpacing: 8,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                SizedBox(
-                  width: 200,
-                  child: TextField(
-                    controller: _startField,
-                    enabled: !_busy,
-                    decoration: const InputDecoration(
-                      labelText: 'Shared start (s)',
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 200,
+                    child: TextField(
+                      controller: _startField,
+                      enabled: !_busy,
+                      decoration: const InputDecoration(
+                        labelText: 'Shared start (s)',
+                      ),
                     ),
                   ),
-                ),
-                SizedBox(
-                  width: 200,
-                  child: TextField(
-                    controller: _endField,
-                    enabled: !_busy,
-                    decoration: const InputDecoration(
-                      labelText: 'Shared end (s)',
+                  SizedBox(
+                    width: 200,
+                    child: TextField(
+                      controller: _endField,
+                      enabled: !_busy,
+                      decoration: const InputDecoration(
+                        labelText: 'Shared end (s)',
+                      ),
                     ),
                   ),
-                ),
-                FilledButton(
-                  onPressed: _busy
-                      ? null
-                      : () => _window(
-                            double.tryParse(_startField.text) ?? double.nan,
-                            double.tryParse(_endField.text) ?? double.nan,
-                          ),
-                  child: const Text('Apply window'),
-                ),
-                TextButton(
-                  onPressed: _busy ? null : () => setState(_fit),
-                  child: const Text('Fit all logs'),
-                ),
-                for (final seconds in [10.0, 1.0, .1])
-                  TextButton(
+                  FilledButton(
                     onPressed: _busy
                         ? null
                         : () => _window(
-                              _cursor ?? _start,
-                              (_cursor ?? _start) + seconds,
+                              double.tryParse(_startField.text) ?? double.nan,
+                              double.tryParse(_endField.text) ?? double.nan,
                             ),
-                    child: Text('$seconds s'),
+                    child: const Text('Apply window'),
                   ),
-                IconButton(
-                  tooltip: 'Previous window',
-                  onPressed: _busy
-                      ? null
-                      : () => _window(
-                            _start - (_end - _start) / 2,
-                            _end - (_end - _start) / 2,
-                          ),
-                  icon: const Icon(Icons.chevron_left),
-                ),
-                IconButton(
-                  tooltip: 'Next window',
-                  onPressed: _busy
-                      ? null
-                      : () => _window(
-                            _start + (_end - _start) / 2,
-                            _end + (_end - _start) / 2,
-                          ),
-                  icon: const Icon(Icons.chevron_right),
-                ),
-              ],
-            ),
-            Text(
-              'Window ${_start.toStringAsFixed(6)}–${_end.toStringAsFixed(6)} s · duration ${(_end - _start).toStringAsFixed(6)} s · linked cursor ${_cursor?.toStringAsFixed(6) ?? "—"} s',
-            ),
-            const Text(
-              'Overview bars retain the exact minimum and maximum of every finite sample in each time bin. Empty bins remain empty. PCM uses packet anchors; buffered sensors use the stored interval. Cursor values are bin ranges, not interpolated point values.',
-            ),
-            if (_busy) const LinearProgressIndicator(),
-            if (_error != null) SelectableText(_error!),
-            for (var i = 0; i < widget.logs.length; i++) _log(i),
-            if (_plots != null) _comparisonCharts(),
-          ],
-        ),),
+                  TextButton(
+                    onPressed: _busy ? null : () => setState(_fit),
+                    child: const Text('Fit all logs'),
+                  ),
+                  for (final seconds in [10.0, 1.0, .1])
+                    TextButton(
+                      onPressed: _busy
+                          ? null
+                          : () => _window(
+                                _cursor ?? _start,
+                                (_cursor ?? _start) + seconds,
+                              ),
+                      child: Text('$seconds s'),
+                    ),
+                  IconButton(
+                    tooltip: 'Previous window',
+                    onPressed: _busy
+                        ? null
+                        : () => _window(
+                              _start - (_end - _start) / 2,
+                              _end - (_end - _start) / 2,
+                            ),
+                    icon: const Icon(Icons.chevron_left),
+                  ),
+                  IconButton(
+                    tooltip: 'Next window',
+                    onPressed: _busy
+                        ? null
+                        : () => _window(
+                              _start + (_end - _start) / 2,
+                              _end + (_end - _start) / 2,
+                            ),
+                    icon: const Icon(Icons.chevron_right),
+                  ),
+                ],
+              ),
+              Text(
+                'Window ${_start.toStringAsFixed(6)}–${_end.toStringAsFixed(6)} s · duration ${(_end - _start).toStringAsFixed(6)} s · linked cursor ${_cursor?.toStringAsFixed(6) ?? "—"} s',
+              ),
+              const Text(
+                'Overview bars retain the exact minimum and maximum of every finite sample in each time bin. Empty bins remain empty. PCM uses packet anchors; buffered sensors use the stored interval. Cursor values are bin ranges, not interpolated point values.',
+              ),
+              if (_busy) const LinearProgressIndicator(),
+              if (_error != null) SelectableText(_error!),
+              for (var i = 0; i < widget.logs.length; i++) _log(i),
+              if (_plots != null) _comparisonCharts(),
+            ],
+          ),
+        ),
       );
   Widget _log(int i) {
     final log = widget.logs[i];
     return Card(
       child: ExpansionTile(
-        title: Text('${i + 1}. ${log.name}',
-            style: const TextStyle(fontWeight: FontWeight.w600),),
+        title: Text(
+          '${i + 1}. ${log.name}',
+          style: const TextStyle(fontWeight: FontWeight.w600),
+        ),
         subtitle: Text(
-            '${oeEarLabel(log.recording.side)} · ${log.bounds.seconds.toStringAsFixed(3)} s · ${_channels[i].length} channels selected · offset ${shift(i).toStringAsFixed(3)} s',),
+          '${oeEarLabel(log.recording.side)} · ${log.bounds.seconds.toStringAsFixed(3)} s · ${_channels[i].length} channels selected · offset ${shift(i).toStringAsFixed(3)} s',
+        ),
         children: [
           Padding(
             padding: const EdgeInsets.all(12),
@@ -377,8 +393,9 @@ class _OeLogComparisonPageState extends State<OeLogComparisonPage> {
         final c = sensor.components[series.channel];
         groups
             .putIfAbsent(
-                '${c.label} [${sensor.isPcm ? "signed PCM counts" : c.unit}]',
-                () => [],)
+          '${c.label} [${sensor.isPcm ? "signed PCM counts" : c.unit}]',
+          () => [],
+        )
             .add((i, series));
       }
     }
@@ -387,7 +404,9 @@ class _OeLogComparisonPageState extends State<OeLogComparisonPage> {
         final largestGroup = groups.values
             .fold<int>(1, (size, items) => math.max(size, items.length));
         final columns = math.min(
-            largestGroup, math.max(1, (constraints.maxWidth / 550).floor()),);
+          largestGroup,
+          math.max(1, (constraints.maxWidth / 550).floor()),
+        );
         final width = (constraints.maxWidth - (columns - 1) * 12) / columns;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -408,7 +427,8 @@ class _OeLogComparisonPageState extends State<OeLogComparisonPage> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                  '${item.$1 + 1}. ${widget.logs[item.$1].name}',),
+                                '${item.$1 + 1}. ${widget.logs[item.$1].name}',
+                              ),
                               _chart(item.$1, item.$2),
                             ],
                           ),

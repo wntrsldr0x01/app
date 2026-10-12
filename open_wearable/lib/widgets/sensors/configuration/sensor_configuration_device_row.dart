@@ -1,4 +1,6 @@
 import 'package:flutter/cupertino.dart';
+import 'package:open_wearable/view_models/sensor_experiment_controller.dart';
+import 'sensor_experiment_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_platform_widgets/flutter_platform_widgets.dart';
 import 'package:open_earable_flutter/open_earable_flutter.dart';
@@ -153,6 +155,13 @@ class _SensorConfigurationDeviceRowState
               ),
             ),
           ..._content,
+          if (device.hasCapability<SensorConfigurationManager>())
+            SensorExperimentCard(
+              controller:
+                  context.read<SensorConfigurationProvider>().experiment,
+              profiles: _experimentProfiles,
+              start: _startExperiment,
+            ),
         ],
       ),
     );
@@ -625,6 +634,75 @@ class _SensorConfigurationDeviceRowState
         Tab(text: 'Profiles'),
       ],
     );
+  }
+
+  Future<List<ExperimentProfile>> _experimentProfiles() async {
+    final scope = await _readCurrentScopeMatch();
+    final keys = await SensorConfigurationStorage.listConfigurationKeys();
+    return [
+      for (final key in keys.where(scope.matchesScopedKey))
+        ExperimentProfile(
+          key,
+          SensorConfigurationStorage.displayNameFromScopedKey(
+            key,
+            scope: scope.matchingScopeForKey(key)!,
+          ),
+        ),
+    ];
+  }
+
+  Future<void> _startExperiment(
+    List<ExperimentStageSelection> selections,
+  ) async {
+    final provider = context.read<SensorConfigurationProvider>();
+    final paired = widget.pairedProvider;
+    final primaryDevice = widget.device;
+    final partner = widget.pairedDevice;
+    final available = await _experimentProfiles();
+    final stages = <SensorExperimentStage>[];
+    Future<void> apply(
+      Map<String, String> primary,
+      Map<String, String>? secondary,
+    ) async {
+      await Future.wait([
+        provider.applyExperimentProfile(primary),
+        if (paired != null && secondary != null)
+          paired.applyExperimentProfile(secondary),
+      ]);
+    }
+
+    for (final selection in selections) {
+      final profile =
+          available.where((p) => p.key == selection.key).firstOrNull;
+      if (profile == null) {
+        throw StateError('Profile no longer matches device firmware');
+      }
+      final config = await _loadProfileConfiguration(selection.key);
+      final mirrored = partner == null
+          ? null
+          : SensorProfileService.buildMirroredProfileConfig(
+              sourceDevice: primaryDevice,
+              targetDevice: partner,
+              sourceProfileConfig: config,
+            );
+      if (partner != null &&
+          (paired == null ||
+              mirrored == null ||
+              mirrored.length != config.length)) {
+        throw StateError('Profile cannot be fully mapped to both devices');
+      }
+      stages.add(
+        SensorExperimentStage(
+          profile.name,
+          selection.duration,
+          () => apply(config, mirrored),
+        ),
+      );
+    }
+    final off = _buildBuiltInOffProfileConfig(primaryDevice);
+    final partnerOff =
+        partner == null ? null : _buildBuiltInOffProfileConfig(partner);
+    await provider.experiment.start(stages, () => apply(off, partnerOff));
   }
 
   Future<void> _loadProfile({

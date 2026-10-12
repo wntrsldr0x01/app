@@ -230,3 +230,52 @@ guides and the mel display uses a sequential purple/blue/green/yellow palette.
 Comparison sources are expandable so charts appear sooner. Workspaces are capped
 at 1560 px for readable controls on wide monitors. These changes do not modify
 FFT, mel, timestamp, or source-value calculations.
+
+### Archiving and left/right comparison
+
+Select logs in **Recorded OE logs**, then choose **Archive selected**. Archived
+logs are hidden from the Active view; switch to Archived to inspect, compare or
+restore them. Archive state lives in the digest-addressed annotation sidecar.
+Original bytes, filenames, hashes and session notes are retained. Desktop state
+persists across restarts; the browser retains its existing temporary-import behavior.
+
+Select exactly one left and one right log and choose **Compare left + right**.
+The comparison orders left before right and initially uses their recorded device
+clocks, with a common time window and linked cursor. Matching channels remain in
+separate panels with common scales. You can switch to elapsed alignment or set
+manual offsets, but those are display operations, not evidence of synchronization.
+
+The pairing assessment matches recorded sensor IDs, sensor names, PCM status,
+component types, groups, names and units. It checks complementary ear sides,
+distinct device IDs, calendar-like packet clocks, packet start difference,
+timestamp extent overlap, backwards timestamps and incomplete parsing. A
+**likely concurrent** candidate requires starts within 2 seconds and at least
+80% overlap of the longer extent, plus matching recorded channels and no detected
+clock reversal or partial interpretation. These thresholds are heuristics;
+extents can span gaps, and header default rates are not active sample rates.
+Header start difference is displayed as supporting evidence. Filenames, import
+times and user-entered labels do not establish concurrent acquisition.
+
+OE v3 cannot verify synchronization: it does not contain a shared capture session
+ID, clock-sync status, clock offset/error bounds or paired-device identity. For
+future verified pairing, the capture system should record a shared session UUID,
+left/right device IDs, a common-clock start trigger and trigger acknowledgement
+from both devices, device-to-common-clock offset and uncertainty measured before
+and after capture, and per-sensor sample counters, active rates and dropped-frame
+counts. A shared session identifies the intended pair; trigger acknowledgements,
+clock uncertainty and sample coverage establish actual simultaneous collection
+and quantify alignment error and drift.
+
+The library supports **List**, **Tiles**, and **Table** layouts. Use List for
+full metadata, Tiles for a responsive card grid, and Table for compact rows with
+recording, ear, recorded-time interpretation, size and user-entered place
+columns. All layouts share filters, sorting, selection, archiving and comparison.
+Tables scroll horizontally on narrow windows; each layout has a draggable
+vertical scrollbar. Grid and table entries are built lazily as you scroll.
+
+**Import .oe files** accepts multiple recordings in one selection. Files are
+parsed and saved one at a time with progress shown in the library. Valid files
+are retained even if others fail, and failures are listed with their filenames.
+SHA-256 duplicates are skipped without replacing existing names or annotations.
+A batch stays in the library and reports imported/duplicate/failed counts; one
+selected valid file still opens its viewer. Each file retains the 128 MiB limit.

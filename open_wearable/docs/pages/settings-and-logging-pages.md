@@ -60,3 +60,28 @@
   - Handles empty/error states for file reading.
 - Provides:
   - Raw log content inspection view.
+
+### Timed sensor experiments
+
+Each configurable device (or combined left/right pair) has **Experiment mode**.
+Save a firmware-compatible profile, choose **Set up experiment**, select the
+profile and its duration in whole seconds, and optionally **Add stage** to build
+a sequence. Start applies the first profile immediately. Each countdown begins
+after fresh hardware configuration reports confirm the requested settings on
+both members of a combined pair. At expiry the next profile is applied; after
+the last stage, the built-in **Off** profile is applied automatically. **Stop and
+turn Off** cancels the sequence and requests Off immediately. Durations exclude
+profile switching/acknowledgement time. An acknowledgement timeout (10 seconds)
+or incompatible setting fails the experiment and attempts Off on both devices;
+the status distinguishes confirmed Off from an unconfirmed shutdown.
+
+The timer belongs to the connected device provider and continues when navigating
+away from sensor configuration. Keep the app running and devices connected;
+this is app-side scheduling, not a firmware deadline. Disconnection cancels
+scheduling and attempts shutdown on the partner. A disconnected device cannot
+be guaranteed to stop. Bluetooth command latency and OS suspension mean stage
+boundaries are not sample-perfect or proof of synchronized left/right capture.
+SD recording follows the saved profile’s targets; experiment mode does not
+start a separate phone recording, power down the hardware, or alter OE headers.
+The expandable timing history shows UTC application, confirmation, expiry and
+failure events for the current app session.

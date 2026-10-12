@@ -5,6 +5,46 @@ import 'package:open_earable_flutter/open_earable_flutter.dart';
 import 'package:open_wearable/view_models/sensor_configuration_provider.dart';
 
 void main() {
+  test('experiment waits for a fresh report instead of cached matching state',
+      () async {
+    final off = SensorConfigurationValue(key: 'off');
+    final configuration =
+        _FakeSensorConfiguration(name: 'Temperature', values: [off]);
+    final manager = _FakeSensorConfigurationManager([configuration]);
+    final provider =
+        SensorConfigurationProvider(sensorConfigurationManager: manager);
+    manager.emit({configuration: off});
+    await Future<void>.delayed(Duration.zero);
+    var completed = false;
+    final applying = provider.applyExperimentProfile(
+        {'Temperature': 'off'},).then((_) => completed = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(configuration.requests, [off]);
+    expect(completed, isFalse);
+    manager.emit({configuration: off});
+    await applying;
+    expect(completed, isTrue);
+    provider.dispose();
+    await manager.dispose();
+  });
+
+  test('experiment rejects unsupported settings before any hardware writes',
+      () async {
+    final off = SensorConfigurationValue(key: 'off');
+    final configuration =
+        _FakeSensorConfiguration(name: 'Temperature', values: [off]);
+    final manager = _FakeSensorConfigurationManager([configuration]);
+    final provider =
+        SensorConfigurationProvider(sensorConfigurationManager: manager);
+    await expectLater(
+        provider
+            .applyExperimentProfile({'Temperature': 'off', 'Unknown': 'on'}),
+        throwsStateError,);
+    expect(configuration.requests, isEmpty);
+    provider.dispose();
+    await manager.dispose();
+  });
+
   test('accepts unchanged device state after a submitted request is rejected',
       () {
     final off = SensorConfigurationValue(key: 'off');
