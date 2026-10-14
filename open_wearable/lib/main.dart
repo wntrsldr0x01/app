@@ -17,6 +17,7 @@ import 'package:open_wearable/models/auto_connect_preferences.dart';
 import 'package:open_wearable/models/connector_settings.dart';
 import 'package:open_wearable/models/labels/label_sensor.dart';
 import 'package:open_wearable/models/log_file_manager.dart';
+import 'package:open_wearable/models/recording_diagnostics.dart';
 import 'package:open_wearable/models/fota_post_update_verification.dart';
 import 'package:open_wearable/models/permissions_helper.dart';
 import 'package:open_wearable/models/wearable_connector.dart'
@@ -573,6 +574,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   void _handleBleAvailabilityChanged(AvailabilityState state) {
+    RecordingDiagnostics.record(
+      'bluetooth_availability',
+      {'state': state.name},
+    );
     final wasPoweredOn = _isBluetoothPoweredOn;
     _isBluetoothPoweredOn = state == AvailabilityState.poweredOn;
 

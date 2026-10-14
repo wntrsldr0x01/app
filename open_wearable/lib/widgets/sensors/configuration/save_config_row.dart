@@ -165,12 +165,23 @@ class _SaveConfigRowState extends State<SaveConfigRow> {
       );
 
       final existingKeys =
-          await SensorConfigurationStorage.listConfigurationKeys();
+          await SensorConfigurationStorage.listConfigurationKeys(
+        includeArchived: true,
+      );
       final conflictingKeys = _collectConflictingKeys(
         existingKeys: existingKeys,
         storageKey: storageKey,
         profileName: profileName,
       );
+      for (final key in conflictingKeys) {
+        if (await SensorConfigurationStorage.isArchived(key)) {
+          if (mounted) {
+            _showToast(
+                'An archived profile already uses this name. Restore it or choose another name.',);
+          }
+          return;
+        }
+      }
       if (conflictingKeys.isNotEmpty) {
         final shouldOverwrite = await _confirmOverwrite(profileName);
         if (!shouldOverwrite) return;
@@ -268,8 +279,9 @@ class _SaveConfigRowState extends State<SaveConfigRow> {
       scope: widget.storageScope,
       name: requestedProfileName,
     );
-    final existingKeys =
-        await SensorConfigurationStorage.listConfigurationKeys();
+    final existingKeys = await SensorConfigurationStorage.listConfigurationKeys(
+      includeArchived: true,
+    );
     final conflictingKeys = _collectConflictingKeys(
       existingKeys: existingKeys,
       storageKey: targetKey,
@@ -278,6 +290,15 @@ class _SaveConfigRowState extends State<SaveConfigRow> {
     final conflictingWithoutSource = conflictingKeys
         .where((key) => key != duplicateSettingsMatch.key)
         .toList(growable: false);
+    for (final key in conflictingWithoutSource) {
+      if (await SensorConfigurationStorage.isArchived(key)) {
+        if (mounted) {
+          _showToast(
+              'An archived profile already uses this name. Restore it or choose another name.',);
+        }
+        return false;
+      }
+    }
     if (conflictingWithoutSource.isNotEmpty) {
       final shouldOverwrite = await _confirmOverwrite(requestedProfileName);
       if (!shouldOverwrite) {

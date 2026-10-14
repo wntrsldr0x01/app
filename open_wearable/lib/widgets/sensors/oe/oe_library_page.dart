@@ -25,6 +25,7 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
   bool _newestFirst = true;
   bool _archived = false;
   String _view = 'list';
+  final Set<String> _collapsedSessions = {};
   final _search = TextEditingController();
   final _listScroll = ScrollController();
   final _tableScroll = ScrollController();
@@ -42,7 +43,7 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
       final notes = _annotations[e.digest] ?? {};
       return (notes['archived'] == 'true') == _archived &&
           (_ear == null || e.side == _ear) &&
-          '${e.name} ${e.digest} ${notes.values.join(' ')}'
+          '${e.name} ${e.digest} ${_sessionName(e)} ${notes.values.join(' ')}'
               .toLowerCase()
               .contains(q);
     }).toList();
@@ -79,6 +80,8 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
           timestampUs: recording.timestampUs,
           side: recording.side,
           deviceId: recording.deviceId,
+          sessionId: entry.sessionId,
+          importedAtUs: entry.importedAtUs,
         );
         await saveOeOriginal(enriched, bytes);
         entries[i] = enriched;
@@ -114,6 +117,8 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
         allowedExtensions: ['oe'],
       );
       if (files.isEmpty) return;
+      final importedAt = DateTime.now().microsecondsSinceEpoch;
+      final sessionId = 'import-$importedAt';
       final known = _entries.map((e) => e.digest).toSet();
       var imported = 0, duplicates = 0;
       final failures = <String>[];
@@ -153,6 +158,8 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
                 timestampUs: recording.timestampUs,
                 side: recording.side,
                 deviceId: recording.deviceId,
+                sessionId: sessionId,
+                importedAtUs: importedAt,
               ),
               bytes,
             );
@@ -173,6 +180,7 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
         // Newly imported originals belong to Active; clear restrictive filters.
         if (imported > 0) {
           _archived = false;
+          _selected.clear();
           _ear = null;
           _query = '';
           _search.clear();
@@ -223,6 +231,8 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
             timestampUs: recording.timestampUs,
             side: recording.side,
             deviceId: recording.deviceId,
+            sessionId: entry.sessionId,
+            importedAtUs: entry.importedAtUs,
           ),
           bytes,
         );
@@ -350,6 +360,14 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
                     ),
                   ],
                 ),
+                OutlinedButton.icon(
+                  onPressed:
+                      _busy || _entries.map(_sessionKey).toSet().length < 2
+                          ? null
+                          : _mergeSessions,
+                  icon: const Icon(Icons.merge_type),
+                  label: const Text('Merge sessions'),
+                ),
                 FilledButton.icon(
                   onPressed: _busy ? null : _import,
                   icon: const Icon(Icons.add),
@@ -370,7 +388,7 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
                     child: TextField(
                       controller: _search,
                       decoration: InputDecoration(
-                        hintText: 'Search name, label, place or hash',
+                        hintText: 'Search session, filename, notes or hash',
                         prefixIcon: const Icon(Icons.search),
                         suffixIcon: _query.isEmpty
                             ? null
@@ -587,84 +605,304 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
         child: child,
       );
 
-  Widget _recordingBrowser(List<OeLibraryEntry> entries) {
-    if (_view == 'tiles') {
-      return _verticalBrowser(
-        GridView.builder(
-          key: const PageStorageKey('oe-library-tiles'),
-          controller: _listScroll,
-          primary: false,
-          padding: const EdgeInsets.only(right: 20, bottom: 20),
-          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-            maxCrossAxisExtent: 460,
-            mainAxisExtent: 240,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-          ),
-          itemCount: entries.length,
-          itemBuilder: (_, i) => _entryTile(entries[i]),
-        ),
-      );
+  String _sessionKey(OeLibraryEntry entry) =>
+      _annotations[entry.digest]?['session_id'] ?? entry.sessionId ?? 'legacy';
+
+  String _sessionName(OeLibraryEntry entry) {
+    final name = _annotations[entry.digest]?['session_name'];
+    if (name != null && name.isNotEmpty) return name;
+    if (entry.importedAtUs == null) return 'Earlier imports';
+    final date = DateTime.fromMicrosecondsSinceEpoch(entry.importedAtUs!);
+    String two(int n) => n.toString().padLeft(2, '0');
+    return 'Import ${two(date.day)}-${two(date.month)}-${date.year} '
+        '${two(date.hour)}:${two(date.minute)}:${two(date.second)}';
+  }
+
+  Future<void> _mergeSessions() async {
+    final groups = <String, List<OeLibraryEntry>>{};
+    for (final entry in _entries) {
+      groups.putIfAbsent(_sessionKey(entry), () => []).add(entry);
     }
-    if (_view == 'table') {
-      return LayoutBuilder(
-        builder: (context, constraints) {
-          final width =
-              constraints.maxWidth < 1050 ? 1050.0 : constraints.maxWidth;
-          return Scrollbar(
-            controller: _tableScroll,
-            thumbVisibility: true,
-            trackVisibility: true,
-            interactive: true,
-            notificationPredicate: (notification) =>
-                notification.metrics.axis == Axis.horizontal,
-            child: SingleChildScrollView(
-              controller: _tableScroll,
-              scrollDirection: Axis.horizontal,
-              child: SizedBox(
-                width: width,
-                height: constraints.maxHeight,
-                child: Column(
-                  children: [
-                    _tableRow(null),
-                    const Divider(height: 1),
-                    Expanded(
-                      child: _verticalBrowser(
-                        ListView.builder(
-                          key: const PageStorageKey('oe-library-table'),
-                          controller: _listScroll,
-                          primary: false,
-                          padding: const EdgeInsets.only(right: 20, bottom: 20),
-                          itemExtent: 64,
-                          itemCount: entries.length,
-                          itemBuilder: (_, i) => _tableRow(entries[i]),
+    final choices = groups.entries.toList()
+      ..sort((a, b) => (b.value.first.importedAtUs ?? 0)
+          .compareTo(a.value.first.importedAtUs ?? 0),);
+    final selected = <String>{};
+    final controller = TextEditingController(text: 'Merged session');
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+          builder: (context, update) => AlertDialog(
+                title: const Text('Merge sessions'),
+                content: SizedBox(
+                    width: 520,
+                    height: 380,
+                    child: Column(children: [
+                      TextField(
+                          controller: controller,
+                          maxLength: 100,
+                          decoration: const InputDecoration(
+                              labelText: 'Combined session name',),
+                          onChanged: (_) => update(() {}),),
+                      const Text(
+                          'Choose at least two sessions. All their logs are included, including archived and filtered logs.',),
+                      const SizedBox(height: 12),
+                      Expanded(
+                          child: ListView(children: [
+                        for (final group in choices)
+                          CheckboxListTile(
+                            title: Text(_sessionName(group.value.first)),
+                            subtitle: Text('${group.value.length} logs'),
+                            value: selected.contains(group.key),
+                            onChanged: (value) => update(() {
+                              if (value == true) {
+                                selected.add(group.key);
+                              } else {
+                                selected.remove(group.key);
+                              }
+                            }),
+                          ),
+                      ],),),
+                    ],),),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Cancel'),),
+                  FilledButton(
+                      onPressed:
+                          selected.length < 2 || controller.text.trim().isEmpty
+                              ? null
+                              : () => Navigator.pop(context, true),
+                      child: const Text('Merge'),),
+                ],
+              ),),
+    );
+    final name = controller.text.trim();
+    Future<void>.delayed(const Duration(milliseconds: 300), controller.dispose);
+    if (confirmed != true || !mounted) return;
+    final entries =
+        _entries.where((e) => selected.contains(_sessionKey(e))).toList();
+    final sessionId = 'merged-${DateTime.now().microsecondsSinceEpoch}';
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      for (final entry in entries) {
+        final notes = await readOeAnnotations(entry.digest);
+        await saveOeAnnotations(entry.digest, {
+          ...notes,
+          'session_id': sessionId,
+          'session_name': name,
+        });
+      }
+      _collapsedSessions.removeAll(selected);
+      await _reload();
+    } catch (error) {
+      await _reload();
+      if (mounted) {
+        setState(() => _error = 'Session merge could not finish: $error');
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _renameSession(List<OeLibraryEntry> entries) async {
+    final controller = TextEditingController(text: _sessionName(entries.first));
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Rename import session'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 100,
+          decoration: const InputDecoration(labelText: 'Session name'),
+          onSubmitted: (value) => Navigator.pop(context, value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    // Let the closing dialog finish before releasing its text controller.
+    Future<void>.delayed(const Duration(milliseconds: 300), controller.dispose);
+    if (name == null || name.isEmpty || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      for (final entry in entries) {
+        final notes = await readOeAnnotations(entry.digest);
+        await saveOeAnnotations(entry.digest, {...notes, 'session_name': name});
+      }
+      await _reload();
+    } catch (error) {
+      if (mounted) setState(() => _error = 'Session rename failed: $error');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Widget _recordingBrowser(List<OeLibraryEntry> entries) {
+    final groups = <String, List<OeLibraryEntry>>{};
+    for (final entry in entries) {
+      groups.putIfAbsent(_sessionKey(entry), () => []).add(entry);
+    }
+    final sessions = groups.entries.toList()
+      ..sort((a, b) {
+        final order = (b.value.first.importedAtUs ?? 0)
+            .compareTo(a.value.first.importedAtUs ?? 0);
+        return _newestFirst ? order : -order;
+      });
+    Widget browser() => _verticalBrowser(
+          CustomScrollView(
+            controller: _listScroll,
+            primary: false,
+            slivers: [
+              for (final session in sessions) ...[
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding:
+                        const EdgeInsets.only(right: 20, bottom: 10, top: 8),
+                    child: Card(
+                      child: ListTile(
+                        leading: Icon(
+                          _collapsedSessions.contains(session.key)
+                              ? Icons.chevron_right
+                              : Icons.expand_more,
+                        ),
+                        title: Text(
+                          _sessionName(session.value.first),
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        subtitle: Text('${session.value.length} shown / '
+                            '${_entries.where((e) => _sessionKey(e) == session.key).length} logs in session'),
+                        onTap: () => setState(() {
+                          if (!_collapsedSessions.remove(session.key)) {
+                            _collapsedSessions.add(session.key);
+                          }
+                        }),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            TextButton(
+                              onPressed: _busy
+                                  ? null
+                                  : () => setState(() {
+                                        final digests = session.value
+                                            .map((e) => e.digest)
+                                            .toSet();
+                                        if (digests.every(_selected.contains)) {
+                                          _selected.removeAll(digests);
+                                        } else {
+                                          _selected.addAll(digests);
+                                        }
+                                      }),
+                              child: Text(
+                                session.value.every(
+                                        (e) => _selected.contains(e.digest),)
+                                    ? 'Deselect session'
+                                    : 'Select session',
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'Rename session',
+                              icon: const Icon(Icons.edit_outlined),
+                              onPressed: _busy
+                                  ? null
+                                  : () => _renameSession(
+                                        _entries
+                                            .where((e) =>
+                                                _sessionKey(e) == session.key,)
+                                            .toList(),
+                                      ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
-                  ],
+                  ),
                 ),
-              ),
+                if (!_collapsedSessions.contains(session.key))
+                  SliverPadding(
+                    padding: const EdgeInsets.only(right: 20, bottom: 20),
+                    sliver: _view == 'tiles'
+                        ? SliverGrid(
+                            gridDelegate:
+                                const SliverGridDelegateWithMaxCrossAxisExtent(
+                              maxCrossAxisExtent: 460,
+                              mainAxisExtent: 240,
+                              crossAxisSpacing: 12,
+                              mainAxisSpacing: 12,
+                            ),
+                            delegate: SliverChildBuilderDelegate(
+                              (_, i) => _entryTile(session.value[i]),
+                              childCount: session.value.length,
+                            ),
+                          )
+                        : SliverList(
+                            delegate: SliverChildBuilderDelegate(
+                              (_, i) => _view == 'table'
+                                  ? SizedBox(
+                                      height: 64,
+                                      child: _tableRow(session.value[i]),
+                                    )
+                                  : Padding(
+                                      padding:
+                                          const EdgeInsets.only(bottom: 10),
+                                      child: _entryCard(session.value[i]),
+                                    ),
+                              childCount: session.value.length,
+                            ),
+                          ),
+                  ),
+              ],
+            ],
+          ),
+        );
+    if (_view != 'table') return browser();
+    return LayoutBuilder(
+      builder: (context, constraints) => Scrollbar(
+        controller: _tableScroll,
+        thumbVisibility: true,
+        notificationPredicate: (n) => n.metrics.axis == Axis.horizontal,
+        child: SingleChildScrollView(
+          controller: _tableScroll,
+          scrollDirection: Axis.horizontal,
+          child: SizedBox(
+            width: constraints.maxWidth < 1050 ? 1050 : constraints.maxWidth,
+            height: constraints.maxHeight,
+            child: Column(
+              children: [
+                _tableRow(null),
+                const Divider(height: 1),
+                Expanded(child: browser()),
+              ],
             ),
-          );
-        },
-      );
-    }
-    return _verticalBrowser(
-      ListView.separated(
-        key: const PageStorageKey('oe-library-recordings'),
-        controller: _listScroll,
-        primary: false,
-        padding: const EdgeInsets.only(right: 20, bottom: 20),
-        itemCount: entries.length,
-        separatorBuilder: (_, i) => const SizedBox(height: 10),
-        itemBuilder: (_, i) => _entryCard(entries[i]),
+          ),
+        ),
       ),
     );
   }
 
+  String _recordingTitle(OeLibraryEntry entry) {
+    final label = _annotations[entry.digest]?['label'];
+    if (label != null && label.isNotEmpty) return label;
+    final match = RegExp(r'^(.*?)_(empty|vocal|silent)_p(\d+)_t(\d+)_')
+        .firstMatch(entry.name);
+    if (match == null) return entry.name;
+    return '${match[1]} · ${match[2]} · Paragraph ${int.parse(match[3]!)} '
+        '· Take ${int.parse(match[4]!)}';
+  }
+
   Widget _entryTile(OeLibraryEntry entry) {
     final notes = _annotations[entry.digest] ?? {};
-    final label = notes['label'] ?? '';
     return Card(
       margin: EdgeInsets.zero,
       color: _selected.contains(entry.digest)
@@ -686,15 +924,15 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
                 ],
               ),
               Tooltip(
-                message: label.isEmpty ? entry.name : label,
+                message: _recordingTitle(entry),
                 child: Text(
-                  label.isEmpty ? entry.name : label,
+                  _recordingTitle(entry),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
-              if (label.isNotEmpty)
+              if (_recordingTitle(entry) != entry.name)
                 Text(entry.name, maxLines: 1, overflow: TextOverflow.ellipsis),
               const Spacer(),
               Text(
@@ -728,7 +966,6 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
   Widget _tableRow(OeLibraryEntry? entry) {
     final notes =
         entry == null ? <String, String>{} : _annotations[entry.digest] ?? {};
-    final label = notes['label'] ?? '';
     Widget cell(String text) => Tooltip(
           message: text,
           child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -751,8 +988,9 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      cell(label.isEmpty ? entry.name : label),
-                      if (label.isNotEmpty) cell(entry.name),
+                      cell(_recordingTitle(entry)),
+                      if (_recordingTitle(entry) != entry.name)
+                        cell(entry.name),
                     ],
                   ),
           ),
@@ -798,7 +1036,7 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
 
   Widget _entryCard(OeLibraryEntry entry) {
     final annotation = _annotations[entry.digest] ?? {};
-    final label = annotation['label'] ?? '', place = annotation['place'] ?? '';
+    final place = annotation['place'] ?? '';
     final selected = _selected.contains(entry.digest);
     return Material(
       color: selected
@@ -835,7 +1073,7 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
                   }),
         ),
         title: Text(
-          label.isEmpty ? entry.name : label,
+          _recordingTitle(entry),
           style: const TextStyle(fontWeight: FontWeight.w600),
         ),
         subtitle: Padding(
@@ -843,7 +1081,7 @@ class _OeLibraryPageState extends State<OeLibraryPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (label.isNotEmpty) Text(entry.name),
+              if (_recordingTitle(entry) != entry.name) Text(entry.name),
               Wrap(
                 spacing: 8,
                 runSpacing: 6,

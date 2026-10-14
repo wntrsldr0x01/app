@@ -38,6 +38,8 @@ Future<void> saveOeOriginal(OeLibraryEntry entry, Uint8List bytes) async {
         'timestamp_us': entry.timestampUs,
         'side': entry.side,
         'device_id': entry.deviceId,
+        'session_id': entry.sessionId,
+        'imported_at_us': entry.importedAtUs,
       },
     ),
     flush: true,
@@ -56,10 +58,18 @@ Future<List<OeLibraryEntry>> listOeOriginals() async {
     if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(hash)) {
       throw const FormatException('Invalid stored OE digest');
     }
-    entries.add(OeLibraryEntry(m['name'] as String, hash, m['size'] as int,
+    entries.add(
+      OeLibraryEntry(
+        m['name'] as String,
+        hash,
+        m['size'] as int,
         timestampUs: m['timestamp_us'] as int?,
         side: m['side'] as int?,
-        deviceId: m['device_id'] as String?,),);
+        deviceId: m['device_id'] as String?,
+        sessionId: m['session_id'] as String?,
+        importedAtUs: m['imported_at_us'] as int?,
+      ),
+    );
   }
   entries.sort((a, b) => a.name.compareTo(b.name));
   return entries;
@@ -99,7 +109,9 @@ Future<Map<String, String>> readOeAnnotations(String digest) async {
 }
 
 Future<void> saveOeAnnotations(
-    String digest, Map<String, String> values,) async {
+  String digest,
+  Map<String, String> values,
+) async {
   final file = await _annotationFile(digest);
   final pending = File('${file.path}.pending');
   await pending.writeAsString(jsonEncode(values), flush: true);

@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:open_wearable/models/recording_diagnostics.dart';
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -5,11 +7,95 @@ import 'package:open_earable_flutter/open_earable_flutter.dart';
 import 'package:open_wearable/view_models/sensor_configuration_provider.dart';
 
 void main() {
-  test('experiment waits for a fresh report instead of cached matching state',
+  test('diagnostics distinguish write request, device report and confirmation',
+      () async {
+    final logs = <Map<String, dynamic>>[];
+    RecordingDiagnostics.sink = (line) => logs.add(
+          jsonDecode(line.substring('RECORDING_DIAGNOSTIC '.length))
+              as Map<String, dynamic>,
+        );
+    addTearDown(() => RecordingDiagnostics.sink = null);
+    final off = SensorConfigurationValue(key: 'off');
+    final record = SensorConfigurationValue(key: 'record');
+    final config =
+        _FakeSensorConfiguration(name: 'Microphones', values: [off, record]);
+    final manager = _FakeSensorConfigurationManager([config]);
+    final provider = SensorConfigurationProvider(
+      sensorConfigurationManager: manager,
+      diagnosticDeviceId: 'right-id',
+      diagnosticDeviceName: 'right',
+    );
+    manager.emit({config: off});
+    await Future<void>.delayed(Duration.zero);
+    final applying = provider.applyExperimentProfile({'Microphones': 'record'});
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      logs
+          .where((e) => e['event'] == 'configuration_write_requested')
+          .single['value'],
+      'record',
+    );
+    expect(logs.any((e) => e['event'] == 'setting_confirmed'), isFalse);
+    manager.emit({config: record});
+    await applying;
+    final confirmation =
+        logs.singleWhere((e) => e['event'] == 'setting_confirmed');
+    expect(confirmation['device_id'], 'right-id');
+    expect(confirmation['value'], 'record');
+    expect(confirmation['elapsed_ms'], isA<int>());
+    expect(
+      logs.singleWhere(
+        (e) => e['event'] == 'profile_apply_confirmed',
+      )['sd_write_verified'],
+      false,
+    );
+    expect(
+      logs.every(
+        (e) => DateTime.tryParse(e['utc'] as String)?.isUtc ?? false,
+      ),
+      isTrue,
+    );
+    provider.dispose();
+    await manager.dispose();
+  });
+
+  test(
+      'a later report reverting an earlier sensor prevents profile confirmation',
       () async {
     final off = SensorConfigurationValue(key: 'off');
+    final record = SensorConfigurationValue(key: 'record');
+    final imu = _FakeSensorConfiguration(name: 'IMU', values: [off, record]);
+    final mic =
+        _FakeSensorConfiguration(name: 'Microphones', values: [off, record]);
+    final manager = _FakeSensorConfigurationManager([imu, mic]);
+    final provider =
+        SensorConfigurationProvider(sensorConfigurationManager: manager);
+    manager.emit({imu: off, mic: off});
+    await Future<void>.delayed(Duration.zero);
+    final applying = provider
+        .applyExperimentProfile({'IMU': 'record', 'Microphones': 'record'});
+    final expectation = expectLater(
+        applying,
+        throwsA(isA<StateError>().having((error) => error.message, 'message',
+            contains('Final profile did not confirm'),),),);
+    await Future<void>.delayed(Duration.zero);
+    manager.emit({imu: record, mic: off});
+    await Future<void>.delayed(Duration.zero);
+    manager.emit({imu: off, mic: record});
+    await expectation;
+    expect(
+        () => provider
+            .verifyReportedProfile({'IMU': 'record', 'Microphones': 'record'}),
+        throwsStateError,);
+    provider.dispose();
+    await manager.dispose();
+  });
+
+  test('changed experiment settings wait for a fresh report', () async {
+    final off = SensorConfigurationValue(key: 'off');
+    final on = SensorConfigurationValue(key: 'on');
     final configuration =
-        _FakeSensorConfiguration(name: 'Temperature', values: [off]);
+        _FakeSensorConfiguration(name: 'Temperature', values: [off, on]);
     final manager = _FakeSensorConfigurationManager([configuration]);
     final provider =
         SensorConfigurationProvider(sensorConfigurationManager: manager);
@@ -17,11 +103,12 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     var completed = false;
     final applying = provider.applyExperimentProfile(
-        {'Temperature': 'off'},).then((_) => completed = true);
+      {'Temperature': 'on'},
+    ).then((_) => completed = true);
     await Future<void>.delayed(Duration.zero);
-    expect(configuration.requests, [off]);
+    expect(configuration.requests, [on]);
     expect(completed, isFalse);
-    manager.emit({configuration: off});
+    manager.emit({configuration: on});
     await applying;
     expect(completed, isTrue);
     provider.dispose();
@@ -37,10 +124,114 @@ void main() {
     final provider =
         SensorConfigurationProvider(sensorConfigurationManager: manager);
     await expectLater(
-        provider
-            .applyExperimentProfile({'Temperature': 'off', 'Unknown': 'on'}),
-        throwsStateError,);
+      provider.applyExperimentProfile({'Temperature': 'off', 'Unknown': 'on'}),
+      throwsStateError,
+    );
     expect(configuration.requests, isEmpty);
+    provider.dispose();
+    await manager.dispose();
+  });
+
+  test('experiment serializes writes and confirms partial reports per sensor',
+      () async {
+    final off = SensorConfigurationValue(key: 'off');
+    final first = _FakeSensorConfiguration(name: 'IMU', values: [off]);
+    final second = _FakeSensorConfiguration(name: 'Mic', values: [off]);
+    final manager = _FakeSensorConfigurationManager([first, second]);
+    final provider =
+        SensorConfigurationProvider(sensorConfigurationManager: manager);
+    final applying =
+        provider.applyExperimentProfile({'IMU': 'off', 'Mic': 'off'});
+    await Future<void>.delayed(Duration.zero);
+    expect(first.requests, [off]);
+    expect(second.requests, isEmpty);
+    manager.emit({first: off});
+    await Future<void>.delayed(Duration.zero);
+    expect(second.requests, [off]);
+    manager.emit({second: off});
+    await applying;
+    provider.dispose();
+    await manager.dispose();
+  });
+
+  test('async SDK write failures are reported without unhandled future errors',
+      () async {
+    final off = SensorConfigurationValue(key: 'off');
+    final config = _FakeSensorConfiguration(name: 'IMU', values: [off]);
+    config.onRequest = () {
+      Future<void>.error(StateError('BLE write failed'));
+    };
+    final manager = _FakeSensorConfigurationManager([config]);
+    final provider =
+        SensorConfigurationProvider(sensorConfigurationManager: manager);
+    await expectLater(
+      provider.applyExperimentProfile({'IMU': 'off'}),
+      throwsStateError,
+    );
+    provider.dispose();
+    await manager.dispose();
+  });
+
+  test('cancellation prevents later sensors from being enabled', () async {
+    final on = SensorConfigurationValue(key: 'on');
+    final first = _FakeSensorConfiguration(name: 'IMU', values: [on]);
+    final second = _FakeSensorConfiguration(name: 'Mic', values: [on]);
+    final manager = _FakeSensorConfigurationManager([first, second]);
+    final provider =
+        SensorConfigurationProvider(sensorConfigurationManager: manager);
+    var cancelled = false;
+    final applying = provider.applyExperimentProfile(
+      {'IMU': 'on', 'Mic': 'on'},
+      isCancelled: () => cancelled,
+    );
+    final expectation = expectLater(applying, throwsStateError);
+    await Future<void>.delayed(Duration.zero);
+    cancelled = true;
+    manager.emit({first: on});
+    await expectation;
+    expect(second.requests, isEmpty);
+    provider.dispose();
+    await manager.dispose();
+  });
+
+  test('shutdown attempts remaining sensors after one async write fails',
+      () async {
+    final off = SensorConfigurationValue(key: 'off');
+    final first = _FakeSensorConfiguration(name: 'IMU', values: [off]);
+    final second = _FakeSensorConfiguration(name: 'Mic', values: [off]);
+    first.onRequest = () {
+      Future<void>.error(StateError('BLE write failed'));
+    };
+    final manager = _FakeSensorConfigurationManager([first, second]);
+    final provider =
+        SensorConfigurationProvider(sensorConfigurationManager: manager);
+    final applying = provider.applyExperimentProfile(
+      {'IMU': 'off', 'Mic': 'off'},
+      continueOnError: true,
+    );
+    final expectation = expectLater(applying, throwsStateError);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(second.requests, [off]);
+    manager.emit({second: off});
+    await expectation;
+    provider.dispose();
+    await manager.dispose();
+  });
+
+  test(
+      'already confirmed Off does not wait for a redundant firmware notification',
+      () async {
+    final off = SensorConfigurationValue(key: 'off');
+    final config = _FakeSensorConfiguration(name: 'IMU', values: [off]);
+    final manager = _FakeSensorConfigurationManager([config]);
+    final provider =
+        SensorConfigurationProvider(sensorConfigurationManager: manager);
+    manager.emit({config: off});
+    await Future<void>.delayed(Duration.zero);
+    await provider
+        .applyExperimentProfile({'IMU': 'off'}, continueOnError: true);
+    expect(config.requests, isEmpty);
     provider.dispose();
     await manager.dispose();
   });
@@ -152,10 +343,12 @@ class _FakeSensorConfiguration extends SensorConfiguration {
   });
 
   final List<SensorConfigurationValue> requests = [];
+  void Function()? onRequest;
 
   @override
   void setConfiguration(SensorConfigurationValue configuration) {
     requests.add(configuration);
+    onRequest?.call();
   }
 }
 

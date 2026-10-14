@@ -170,6 +170,7 @@ class SensorProfileService {
     required Wearable sourceDevice,
     required Wearable targetDevice,
     required Map<String, String> sourceProfileConfig,
+    bool requireExactValues = false,
   }) {
     if (!sourceDevice.hasCapability<SensorConfigurationManager>() ||
         !targetDevice.hasCapability<SensorConfigurationManager>()) {
@@ -209,12 +210,17 @@ class SensorProfileService {
         mirroredConfig: mirroredConfig,
         sourceValue: sourceValue,
       );
-      if (mirroredValue == null) {
+      if (mirroredValue == null ||
+          (requireExactValues &&
+              !configurationValuesMatch(sourceValue, mirroredValue))) {
         continue;
       }
       mirrored[mirroredConfig.name] = mirroredValue.key;
     }
 
+    if (requireExactValues && mirrored.length != sourceProfileConfig.length) {
+      return null;
+    }
     return mirrored;
   }
 

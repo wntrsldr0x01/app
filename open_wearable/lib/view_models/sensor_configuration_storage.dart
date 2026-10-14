@@ -62,9 +62,35 @@ class SensorConfigurationStorage {
     await file.writeAsString(jsonEncode(config));
   }
 
-  static Future<List<String>> listConfigurationKeys() async {
+  static Future<List<String>> listConfigurationKeys(
+      {bool includeArchived = false,}) async {
     final files = await _getAllConfigFiles();
-    return files.map(_getKeyFromFile).where((key) => key.isNotEmpty).toList();
+    final keys = <String>[];
+    for (final file in files) {
+      final key = _getKeyFromFile(file);
+      if (key.isNotEmpty && (includeArchived || !await isArchived(key))) {
+        keys.add(key);
+      }
+    }
+    return keys;
+  }
+
+  static Future<bool> isArchived(String key) async {
+    final file = await _getConfigFile(key);
+    return File('${file.path}.archived').exists();
+  }
+
+  /// Archive only changes visibility; profile payload and key remain intact.
+  static Future<void> setArchived(String key, bool archived) async {
+    final file = await _getConfigFile(key);
+    if (!await file.exists()) throw StateError('Profile no longer exists');
+    final marker = File('${file.path}.archived');
+    if (archived) {
+      await marker.writeAsString(DateTime.now().toUtc().toIso8601String(),
+          flush: true,);
+    } else if (await marker.exists()) {
+      await marker.delete();
+    }
   }
 
   static String _getKeyFromFile(File file) =>
@@ -100,6 +126,8 @@ class SensorConfigurationStorage {
     if (await file.exists()) {
       await file.delete();
     }
+    final marker = File('${file.path}.archived');
+    if (await marker.exists()) await marker.delete();
   }
 
   static String scopedPrefix(String scope) =>

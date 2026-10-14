@@ -8,6 +8,7 @@ import 'package:open_wearable/models/wearable_status_cache.dart';
 import 'package:open_wearable/view_models/sensor_configuration_provider.dart';
 
 import '../models/logger.dart';
+import '../models/recording_diagnostics.dart';
 import '../models/firmware_version_comparison.dart';
 
 /// Event emitted when a newer firmware version is available for a wearable.
@@ -260,6 +261,10 @@ class WearablesProvider with ChangeNotifier {
   }
 
   void addWearable(Wearable wearable) {
+    RecordingDiagnostics.record('wearable_added', {
+      'device_id': wearable.deviceId,
+      'device_name': wearable.name,
+    });
     // 1) Fast path: ignore duplicates and push into lists/maps synchronously
     if (_isDuplicateDevice(wearable)) return;
 
@@ -328,6 +333,8 @@ class WearablesProvider with ChangeNotifier {
       _sensorConfigurationProviders[wearable] = SensorConfigurationProvider(
         sensorConfigurationManager:
             wearable.requireCapability<SensorConfigurationManager>(),
+        diagnosticDeviceId: wearable.deviceId,
+        diagnosticDeviceName: wearable.name,
       );
     }
   }
@@ -517,6 +524,10 @@ class WearablesProvider with ChangeNotifier {
   }
 
   void removeWearable(Wearable wearable) {
+    RecordingDiagnostics.record('wearable_removed', {
+      'device_id': wearable.deviceId,
+      'device_name': wearable.name,
+    });
     WearableStatusCache.instance.clearDevice(wearable.deviceId);
     _splitStereoPairKeys.removeWhere(
       (key) => WearableDisplayGroup.stereoPairKeyContainsDevice(

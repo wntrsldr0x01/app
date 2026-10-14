@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:open_earable_flutter/open_earable_flutter.dart' hide logger;
 
 import '../models/logger.dart';
+import '../models/recording_diagnostics.dart';
 import 'sensor_experiment_controller.dart';
 import '../models/shared_sensor_configuration.dart';
 
@@ -41,6 +42,12 @@ class SensorConfigurationProvider with ChangeNotifier {
   final SensorConfigurationManager _sensorConfigurationManager;
   final experiment = SensorExperimentController();
   bool _disposed = false;
+  final String? diagnosticDeviceId;
+  final String? diagnosticDeviceName;
+  Map<String, Object?> get _diagnosticDevice => {
+        'device_id': diagnosticDeviceId,
+        'device_name': diagnosticDeviceName,
+      };
 
   final Map<SensorConfiguration, SensorConfigurationValue>
       _sensorConfigurations = {};
@@ -56,25 +63,33 @@ class SensorConfigurationProvider with ChangeNotifier {
 
   SensorConfigurationProvider({
     required SensorConfigurationManager sensorConfigurationManager,
+    this.diagnosticDeviceId,
+    this.diagnosticDeviceName,
   }) : _sensorConfigurationManager = sensorConfigurationManager {
     _sensorConfigurationSubscription =
         sharedSensorConfiguration(_sensorConfigurationManager).listen((event) {
+      RecordingDiagnostics.record('configuration_report', {
+        ..._diagnosticDevice,
+        'values': {
+          for (final entry in event.entries) entry.key.name: entry.value.key,
+        },
+      });
       final hadReceivedConfigurationReport = _hasReceivedConfigurationReport;
       final previousReportedConfigurations =
           Map<String, SensorConfigurationValue>.of(
         _lastReportedConfigurations,
       );
       _hasReceivedConfigurationReport = true;
-      _lastReportedConfigurations
-        ..clear()
-        ..addEntries(
-          event.entries.map(
-            (entry) => MapEntry(
-              _configurationIdentityKey(entry.key),
-              entry.value,
-            ),
+      // Some managers notify only changed sensors. Preserve other last-known
+      // reports so acknowledging one sensor does not erase the rest of a pair.
+      _lastReportedConfigurations.addEntries(
+        event.entries.map(
+          (entry) => MapEntry(
+            _configurationIdentityKey(entry.key),
+            entry.value,
           ),
-        );
+        ),
+      );
       _lastReportedConfigurationKeys
         ..clear()
         ..addAll(_lastReportedConfigurations.keys);
@@ -150,6 +165,11 @@ class SensorConfigurationProvider with ChangeNotifier {
     // Once submitted, accept the device's actual state, including rejection.
     // Edits that have not been submitted remain protected from old reports.
     clearPendingChanges(onlyFor: [configuration]);
+    RecordingDiagnostics.record('configuration_write_requested', {
+      ..._diagnosticDevice,
+      'sensor': configuration.name,
+      'value': value.key,
+    });
     configuration.setConfiguration(value);
   }
 
@@ -384,6 +404,20 @@ class SensorConfigurationProvider with ChangeNotifier {
         );
       }
 
+      if (matchingValue == null) {
+        RecordingDiagnostics.record('unsupported_option_substitution', {
+          ..._diagnosticDevice,
+          'sensor': sensorConfiguration.name,
+          'previous_selected': selectedValue.key,
+          'substituted': possibleValues.last.key,
+          'options': [
+            for (final option
+                in _sensorConfigurationOptions[sensorConfiguration] ??
+                    <SensorConfigurationOption>{})
+              option.toString(),
+          ],
+        });
+      }
       _sensorConfigurations[sensorConfiguration] =
           matchingValue ?? possibleValues.last;
       if (markPending) {
@@ -484,8 +518,27 @@ class SensorConfigurationProvider with ChangeNotifier {
   }
 
   /// Validate the entire payload before writing; wait for a fresh hardware report.
-  Future<void> applyExperimentProfile(Map<String, String> profile) async {
-    if (_disposed) throw StateError('Device disconnected');
+  Future<void> applyExperimentProfile(
+    Map<String, String> profile, {
+    bool Function()? isCancelled,
+    bool continueOnError = false,
+  }) async {
+    void checkActive() {
+      if (_disposed) throw StateError('Device disconnected');
+      if (isCancelled?.call() ?? false) {
+        throw StateError('Experiment cancelled');
+      }
+    }
+
+    final operation = '${DateTime.now().microsecondsSinceEpoch}';
+    final elapsed = Stopwatch()..start();
+    RecordingDiagnostics.record('profile_apply_begin', {
+      ..._diagnosticDevice,
+      'operation': operation,
+      'values': profile,
+      'continue_on_error': continueOnError,
+    });
+    checkActive();
     if (profile.isEmpty) throw StateError('Profile has no compatible settings');
     final entries = <(SensorConfiguration, SensorConfigurationValue)>[];
     for (final entry in profile.entries) {
@@ -499,44 +552,157 @@ class SensorConfigurationProvider with ChangeNotifier {
       }
       entries.add((config, value));
     }
-    final confirmed = Completer<void>();
-    bool acceptingReports = false;
+    final failures = <String>[];
+    Completer<void>? pending;
+    (SensorConfiguration, SensorConfigurationValue)? requested;
     final subscription =
         sharedSensorConfiguration(_sensorConfigurationManager).listen(
       (report) {
-        if (acceptingReports &&
-            entries.every(
-              (entry) => report.entries.any(
-                (reported) =>
-                    _configurationIdentityKey(reported.key) ==
-                        _configurationIdentityKey(entry.$1) &&
-                    _configurationValuesMatch(reported.value, entry.$2),
-              ),
+        final entry = requested;
+        if (entry != null &&
+            report.entries.any(
+              (reported) =>
+                  _configurationIdentityKey(reported.key) ==
+                      _configurationIdentityKey(entry.$1) &&
+                  _configurationValuesMatch(reported.value, entry.$2),
             )) {
-          if (!confirmed.isCompleted) confirmed.complete();
+          if (!(pending?.isCompleted ?? true)) pending!.complete();
         }
       },
       onError: (Object error, StackTrace stack) {
-        if (!confirmed.isCompleted) confirmed.completeError(error, stack);
+        if (!(pending?.isCompleted ?? true)) {
+          pending!.completeError(error, stack);
+        }
       },
       onDone: () {
-        if (!confirmed.isCompleted) {
-          confirmed.completeError(StateError('Device disconnected'));
+        if (!(pending?.isCompleted ?? true)) {
+          pending!.completeError(StateError('Device disconnected'));
         }
       },
     );
     try {
-      // Drain the shared stream’s cached replay before issuing new writes.
+      // Drain the cached replay before expecting fresh reports for new writes.
       await Future<void>.delayed(Duration.zero);
-      if (_disposed) throw StateError('Device disconnected');
-      acceptingReports = true;
       for (final entry in entries) {
-        addSensorConfiguration(entry.$1, entry.$2);
-        applyConfiguration(entry.$1, entry.$2);
+        checkActive();
+        final reported = getLastReportedConfigurationValue(entry.$1);
+        if (reported != null && _configurationValuesMatch(reported, entry.$2)) {
+          RecordingDiagnostics.record('setting_already_reported', {
+            ..._diagnosticDevice,
+            'operation': operation,
+            'sensor': entry.$1.name,
+            'value': entry.$2.key,
+          });
+          // Firmware may not notify for an unchanged setting. Preserve the
+          // confirmed state instead of writing a no-op and timing out on it.
+          addSensorConfiguration(entry.$1, entry.$2, markPending: false);
+          clearPendingChanges(onlyFor: [entry.$1]);
+          continue;
+        }
+        final settingClock = Stopwatch()..start();
+        RecordingDiagnostics.record('setting_wait_begin', {
+          ..._diagnosticDevice,
+          'operation': operation,
+          'sensor': entry.$1.name,
+          'requested': entry.$2.key,
+          'previous_reported': reported?.key,
+          'timeout_ms': 10000,
+        });
+        pending = Completer<void>();
+        requested = entry;
+        final acknowledged = pending;
+        final confirmation = acknowledged.future.timeout(
+          const Duration(seconds: 10),
+          onTimeout: () =>
+              throw TimeoutException('No confirmation for ${entry.$1.name}'),
+        );
+        // The SDK setter is void but spawns async BLE writes. Capture errors
+        // in their zone rather than allowing them to become unhandled errors.
+        runZonedGuarded(() {
+          addSensorConfiguration(entry.$1, entry.$2);
+          applyConfiguration(entry.$1, entry.$2);
+        }, (Object error, StackTrace stack) {
+          if (!acknowledged.isCompleted) {
+            acknowledged.completeError(error, stack);
+          }
+        });
+        try {
+          await confirmation;
+          RecordingDiagnostics.record('setting_confirmed', {
+            ..._diagnosticDevice,
+            'operation': operation,
+            'sensor': entry.$1.name,
+            'value': entry.$2.key,
+            'elapsed_ms': settingClock.elapsedMilliseconds,
+          });
+        } catch (error) {
+          RecordingDiagnostics.record('setting_failed', {
+            ..._diagnosticDevice,
+            'operation': operation,
+            'sensor': entry.$1.name,
+            'requested': entry.$2.key,
+            'last_reported': getLastReportedConfigurationValue(entry.$1)?.key,
+            'elapsed_ms': settingClock.elapsedMilliseconds,
+            'error': '$error',
+          });
+          if (!continueOnError || (isCancelled?.call() ?? false)) rethrow;
+          failures.add('${entry.$1.name}: $error');
+        } finally {
+          requested = null;
+          pending = null;
+        }
       }
-      await confirmed.future.timeout(const Duration(seconds: 10));
+      checkActive();
+      if (failures.isNotEmpty) {
+        throw StateError('Shutdown settings failed: ${failures.join('; ')}');
+      }
+      // Per-setting acknowledgements are not sufficient if a later report
+      // rejects or reverts a setting that was acknowledged earlier.
+      verifyReportedProfile(profile);
+      RecordingDiagnostics.record('profile_apply_confirmed', {
+        ..._diagnosticDevice,
+        'operation': operation,
+        'elapsed_ms': elapsed.elapsedMilliseconds,
+        'sd_write_verified': false,
+      });
+    } catch (error) {
+      RecordingDiagnostics.record('profile_apply_failed', {
+        ..._diagnosticDevice,
+        'operation': operation,
+        'elapsed_ms': elapsed.elapsedMilliseconds,
+        'error': '$error',
+      });
+      rethrow;
     } finally {
+      requested = null;
       await subscription.cancel();
+    }
+  }
+
+  /// Require the latest known device settings to match before starting a stage.
+  void verifyReportedProfile(Map<String, String> profile) {
+    if (_disposed) throw StateError('Device disconnected');
+    final mismatches = <String>[];
+    for (final entry in profile.entries) {
+      final config = _sensorConfigurationManager.sensorConfigurations
+          .where((candidate) => candidate.name == entry.key)
+          .firstOrNull;
+      final expected =
+          config?.values.where((value) => value.key == entry.value).firstOrNull;
+      final reported =
+          config == null ? null : getLastReportedConfigurationValue(config);
+      if (expected == null ||
+          reported == null ||
+          !_configurationValuesMatch(reported, expected)) {
+        mismatches.add(
+          '${entry.key}: requested ${entry.value}, reported ${reported?.key ?? 'unknown'}',
+        );
+      }
+    }
+    if (mismatches.isNotEmpty) {
+      throw StateError(
+        'Final profile did not confirm: ${mismatches.join('; ')}',
+      );
     }
   }
 
@@ -629,6 +795,14 @@ class SensorConfigurationProvider with ChangeNotifier {
 
   @override
   void dispose() {
+    RecordingDiagnostics.record('configuration_provider_disposed', {
+      ..._diagnosticDevice,
+      'last_reported': {
+        for (final entry in _lastReportedConfigurations.entries)
+          entry.key: entry.value.key,
+      },
+      'experiment_running': experiment.running,
+    });
     _disposed = true;
     experiment.dispose();
     _sensorConfigurationSubscription?.cancel();

@@ -1,4 +1,6 @@
+import 'package:open_wearable/models/recording_diagnostics.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:open_wearable/models/experiment_recording_name.dart';
 import 'package:open_wearable/view_models/sensor_experiment_controller.dart';
 import 'sensor_experiment_card.dart';
 import 'package:flutter/material.dart';
@@ -48,6 +50,8 @@ class _SensorConfigurationDeviceRowState
   late final TabController _tabController;
   late Future<DeviceProfileScopeMatch> _profileScopeMatchFuture;
   List<Widget> _content = const [];
+  bool _showArchivedProfiles = false;
+  Set<String> _archivedProfileKeys = {};
   final Map<String, Future<Map<String, String>>> _profileConfigFutures = {};
 
   @override
@@ -157,6 +161,16 @@ class _SensorConfigurationDeviceRowState
           ..._content,
           if (device.hasCapability<SensorConfigurationManager>())
             SensorExperimentCard(
+              supportsNaming:
+                  widget.device.hasCapability<EdgeRecorderManager>() &&
+                      (widget.pairedDevice == null ||
+                          widget.pairedDevice!
+                              .hasCapability<EdgeRecorderManager>()),
+              storageKey: ([
+                widget.device.deviceId,
+                if (widget.pairedDevice != null) widget.pairedDevice!.deviceId,
+              ]..sort())
+                  .join('|'),
               controller:
                   context.read<SensorConfigurationProvider>().experiment,
               profiles: _experimentProfiles,
@@ -426,9 +440,16 @@ class _SensorConfigurationDeviceRowState
     }
 
     List<String> allConfigKeys;
+    final archivedKeys = <String>{};
     try {
-      allConfigKeys = await SensorConfigurationStorage.listConfigurationKeys()
-          .timeout(const Duration(seconds: 8));
+      allConfigKeys = await SensorConfigurationStorage.listConfigurationKeys(
+        includeArchived: true,
+      ).timeout(const Duration(seconds: 8));
+      for (final key in allConfigKeys) {
+        if (await SensorConfigurationStorage.isArchived(key)) {
+          archivedKeys.add(key);
+        }
+      }
     } catch (error, stackTrace) {
       debugPrint(
         'Failed to load sensor profiles for ${scopeMatch.saveScope}: '
@@ -468,6 +489,10 @@ class _SensorConfigurationDeviceRowState
       });
       return;
     }
+    _archivedProfileKeys = archivedKeys;
+    allConfigKeys = allConfigKeys
+        .where((key) => archivedKeys.contains(key) == _showArchivedProfiles)
+        .toList();
     final scopedKeys = allConfigKeys.where(scopeMatch.matchesScopedKey).toList()
       ..sort();
     final legacyKeys = allConfigKeys
@@ -477,7 +502,7 @@ class _SensorConfigurationDeviceRowState
     final profileKeys = [
       ...scopedKeys.where((key) => key != _builtInOffProfileKey),
       ...legacyKeys.where((key) => key != _builtInOffProfileKey),
-      _builtInOffProfileKey,
+      if (!_showArchivedProfiles) _builtInOffProfileKey,
     ];
 
     if (!mounted) return;
@@ -493,14 +518,41 @@ class _SensorConfigurationDeviceRowState
         onSaved: _refreshProfiles,
       ),
       const Divider(),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                _showArchivedProfiles ? 'Archived profiles' : 'Active profiles',
+              ),
+            ),
+            TextButton.icon(
+              onPressed: () {
+                _showArchivedProfiles = !_showArchivedProfiles;
+                _refreshProfiles();
+              },
+              icon: Icon(
+                _showArchivedProfiles
+                    ? Icons.view_list_rounded
+                    : Icons.archive_outlined,
+              ),
+              label:
+                  Text(_showArchivedProfiles ? 'Show active' : 'Show archived'),
+            ),
+          ],
+        ),
+      ),
     ];
 
     if (profileKeys.isEmpty) {
       content.add(
-        const Padding(
-          padding: EdgeInsets.all(12),
+        Padding(
+          padding: const EdgeInsets.all(12),
           child: Text(
-            'No profiles saved yet. Save current settings above, then tap a profile to load as current.',
+            _showArchivedProfiles
+                ? 'No archived profiles.'
+                : 'No profiles saved yet. Save current settings above, then tap a profile to load as current.',
           ),
         ),
       );
@@ -522,6 +574,7 @@ class _SensorConfigurationDeviceRowState
     required DeviceProfileScopeMatch scopeMatch,
   }) {
     final isBuiltIn = _isBuiltInProfileKey(key);
+    final isArchived = _archivedProfileKeys.contains(key);
     final matchedScope = scopeMatch.matchingScopeForKey(key);
     final isDeviceScoped = isBuiltIn || matchedScope != null;
 
@@ -532,8 +585,10 @@ class _SensorConfigurationDeviceRowState
       _ => key,
     };
 
-    return Consumer<SensorConfigurationProvider>(
-      builder: (context, provider, _) {
+    final provider = context.read<SensorConfigurationProvider>();
+    return ListenableBuilder(
+      listenable: Listenable.merge([provider, widget.pairedProvider]),
+      builder: (context, _) {
         return FutureBuilder<Map<String, String>>(
           future: _profileConfigFutures.putIfAbsent(
             key,
@@ -541,13 +596,15 @@ class _SensorConfigurationDeviceRowState
           ),
           builder: (context, snapshot) {
             final profileConfig = snapshot.data;
-            final state = SensorProfileService.resolveProfileApplicationState(
-              primaryDevice: widget.device,
-              primaryProvider: provider,
-              pairedProvider: widget.pairedProvider,
-              pairedDevice: widget.pairedDevice,
-              profileConfig: profileConfig,
-            );
+            final state = isArchived
+                ? ProfileApplicationState.none
+                : SensorProfileService.resolveProfileApplicationState(
+                    primaryDevice: widget.device,
+                    primaryProvider: provider,
+                    pairedProvider: widget.pairedProvider,
+                    pairedDevice: widget.pairedDevice,
+                    profileConfig: profileConfig,
+                  );
             final colorScheme = Theme.of(context).colorScheme;
             const appliedGreen = Color(0xFF2E7D32);
             final stateColor = switch (state) {
@@ -570,19 +627,22 @@ class _SensorConfigurationDeviceRowState
               ProfileApplicationState.none => null,
             };
 
-            final subtitle = switch (state) {
-              ProfileApplicationState.selected => 'Selected, not applied',
-              ProfileApplicationState.applied => widget.pairedProvider == null
-                  ? 'Applied on device'
-                  : 'Applied on both devices',
-              ProfileApplicationState.mixed =>
-                'Mixed state across paired devices',
-              ProfileApplicationState.none => isBuiltIn
-                  ? 'Built-in default profile'
-                  : isDeviceScoped
-                      ? 'Tap to load as current'
-                      : 'Legacy shared profile',
-            };
+            final subtitle = isArchived
+                ? 'Archived — restore to use'
+                : switch (state) {
+                    ProfileApplicationState.selected => 'Selected, not applied',
+                    ProfileApplicationState.applied =>
+                      widget.pairedProvider == null
+                          ? 'Applied on device'
+                          : 'Applied on both devices',
+                    ProfileApplicationState.mixed =>
+                      'Mixed state across paired devices',
+                    ProfileApplicationState.none => isBuiltIn
+                        ? 'Built-in default profile'
+                        : isDeviceScoped
+                            ? 'Tap to load as current'
+                            : 'Legacy shared profile',
+                  };
 
             return Padding(
               padding: const EdgeInsets.symmetric(vertical: 2),
@@ -590,14 +650,18 @@ class _SensorConfigurationDeviceRowState
                 decoration: tileDecoration ?? const BoxDecoration(),
                 child: PlatformListTile(
                   leading: Icon(
-                    Icons.view_list_rounded,
+                    isArchived
+                        ? Icons.archive_outlined
+                        : Icons.view_list_rounded,
                     color: state == ProfileApplicationState.none
                         ? colorScheme.onSurfaceVariant
                         : stateColor,
                   ),
                   title: PlatformText(title, style: titleStyle),
                   subtitle: PlatformText(subtitle),
-                  onTap: () => _loadProfile(key: key, title: title),
+                  onTap: () => isArchived
+                      ? _viewProfileDetails(key: key, title: title)
+                      : _loadProfile(key: key, title: title),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -660,15 +724,63 @@ class _SensorConfigurationDeviceRowState
     final partner = widget.pairedDevice;
     final available = await _experimentProfiles();
     final stages = <SensorExperimentStage>[];
+    final off = _buildBuiltInOffProfileConfig(primaryDevice);
+    final partnerOff =
+        partner == null ? null : _buildBuiltInOffProfileConfig(partner);
+    final scope = ([
+      primaryDevice.deviceId,
+      if (partner != null) partner.deviceId,
+    ]..sort())
+        .join('|');
     Future<void> apply(
       Map<String, String> primary,
-      Map<String, String>? secondary,
-    ) async {
+      Map<String, String>? secondary, {
+      bool Function()? isCancelled,
+      bool shutdown = false,
+    }) async {
+      Future<void> onDevice(
+        SensorConfigurationProvider target,
+        Map<String, String> config,
+        String name,
+      ) async {
+        RecordingDiagnostics.record('experiment_device_apply', {
+          'run_generation': provider.experiment.runGeneration,
+          'device_id': identical(target, provider)
+              ? primaryDevice.deviceId
+              : partner?.deviceId,
+          'device_name': name,
+          'shutdown': shutdown,
+          'values': config,
+        });
+        try {
+          await target.applyExperimentProfile(
+            config,
+            isCancelled: isCancelled,
+            continueOnError: shutdown,
+          );
+        } catch (error) {
+          throw StateError('$name: $error');
+        }
+      }
+
       await Future.wait([
-        provider.applyExperimentProfile(primary),
+        onDevice(provider, primary, primaryDevice.name),
         if (paired != null && secondary != null)
-          paired.applyExperimentProfile(secondary),
+          onDevice(paired, secondary, partner!.name),
       ]);
+      // Recheck both after the slower ear finishes, not just each ear when
+      // its own write sequence finishes.
+      provider.verifyReportedProfile(primary);
+      if (paired != null && secondary != null) {
+        paired.verifyReportedProfile(secondary);
+      }
+      RecordingDiagnostics.record('experiment_targets_verified', {
+        'primary_id': primaryDevice.deviceId,
+        'partner_id': partner?.deviceId,
+        'primary_values': primary,
+        'partner_values': secondary,
+        'shutdown': shutdown,
+      });
     }
 
     for (final selection in selections) {
@@ -684,6 +796,7 @@ class _SensorConfigurationDeviceRowState
               sourceDevice: primaryDevice,
               targetDevice: partner,
               sourceProfileConfig: config,
+              requireExactValues: true,
             );
       if (partner != null &&
           (paired == null ||
@@ -695,14 +808,101 @@ class _SensorConfigurationDeviceRowState
         SensorExperimentStage(
           profile.name,
           selection.duration,
-          () => apply(config, mirrored),
+          () async {
+            final generation = provider.experiment.runGeneration;
+            bool cancelled() => generation != provider.experiment.runGeneration;
+            void checkActive() {
+              if (cancelled()) throw StateError('Experiment cancelled');
+            }
+
+            // End the old SD recording before changing the filename prefix.
+            await apply(
+              off,
+              partnerOff,
+              isCancelled: cancelled,
+              shutdown: true,
+            );
+            checkActive();
+            if (selection.automaticName) {
+              if (!primaryDevice.hasCapability<EdgeRecorderManager>() ||
+                  (partner != null &&
+                      !partner.hasCapability<EdgeRecorderManager>())) {
+                throw StateError(
+                  'Automatic filenames need SD recording support on every device',
+                );
+              }
+              final take = await ExperimentRecordingNames.reserve(
+                scope,
+                profile.key,
+                selection.effort,
+                selection.effort == 'empty' ? 1 : selection.paragraph,
+              );
+              checkActive();
+              final prefix = ExperimentRecordingNames.prefix(
+                profile.name,
+                selection.effort,
+                selection.paragraph,
+                take,
+                environment: selection.environment,
+                posture: selection.posture,
+              );
+              provider.experiment.take = take;
+              provider.experiment.recordingPrefix = prefix;
+              RecordingDiagnostics.record('corpus_take_reserved', {
+                'corpus_version': 'silent-speech-v1',
+                'passage_id': selection.effort == 'empty'
+                    ? null
+                    : 'P${selection.paragraph.toString().padLeft(3, '0')}',
+                'take': take,
+                'effort': selection.effort,
+                'environment': selection.environment,
+                'posture': selection.posture,
+                'prefix': prefix,
+                'primary_id': primaryDevice.deviceId,
+                'partner_id': partner?.deviceId,
+              });
+              provider.experiment.recordDetail('Filename prefix: $prefix');
+              for (final device in [
+                primaryDevice,
+                if (partner != null) partner,
+              ]) {
+                checkActive();
+                final recorder =
+                    device.requireCapability<EdgeRecorderManager>();
+                RecordingDiagnostics.record('filename_prefix_requested', {
+                  'device_id': device.deviceId,
+                  'device_name': device.name,
+                  'prefix': prefix,
+                  'profile_key': profile.key,
+                });
+                await recorder
+                    .setFilePrefix(prefix)
+                    .timeout(const Duration(seconds: 10));
+                checkActive();
+                final actual = await recorder.filePrefix
+                    .timeout(const Duration(seconds: 10));
+                RecordingDiagnostics.record('filename_prefix_readback', {
+                  'device_id': device.deviceId,
+                  'requested': prefix,
+                  'reported': actual.replaceAll('\u0000', ''),
+                  'matches': actual.replaceAll('\u0000', '') == prefix,
+                });
+                if (actual.replaceAll('\u0000', '') != prefix) {
+                  throw StateError(
+                    '${device.name}: filename prefix did not confirm',
+                  );
+                }
+              }
+            }
+            checkActive();
+            await apply(config, mirrored, isCancelled: cancelled);
+          },
+          finishManually: selection.finishManually,
         ),
       );
     }
-    final off = _buildBuiltInOffProfileConfig(primaryDevice);
-    final partnerOff =
-        partner == null ? null : _buildBuiltInOffProfileConfig(partner);
-    await provider.experiment.start(stages, () => apply(off, partnerOff));
+    await provider.experiment
+        .start(stages, () => apply(off, partnerOff, shutdown: true));
   }
 
   Future<void> _loadProfile({
@@ -859,6 +1059,31 @@ class _SensorConfigurationDeviceRowState
     _updateContent();
   }
 
+  Future<void> _setProfileArchived(
+    String key,
+    String title,
+    bool archived,
+  ) async {
+    if (_isBuiltInProfileKey(key)) return;
+    try {
+      await SensorConfigurationStorage.setArchived(key, archived);
+      if (!mounted) return;
+      _showSnackBar(
+        '${archived ? 'Archived' : 'Restored'} profile "$title".',
+        type: AppToastType.success,
+        icon: archived ? Icons.archive_outlined : Icons.unarchive_outlined,
+      );
+      _refreshProfiles();
+    } catch (error) {
+      if (!mounted) return;
+      _showSnackBar(
+        'Could not update profile archive: $error',
+        type: AppToastType.error,
+        icon: Icons.error_outline,
+      );
+    }
+  }
+
   void _showProfileActions({required String key, required String title}) {
     final isBuiltIn = _isBuiltInProfileKey(key);
     final actions = _buildProfileActions(
@@ -917,16 +1142,29 @@ class _SensorConfigurationDeviceRowState
         icon: Icons.info_outline,
         onPressed: () => _viewProfileDetails(key: key, title: title),
       ),
-      _ProfileActionItem(
-        label: 'Load',
-        icon: Icons.download,
-        onPressed: () => _loadProfile(key: key, title: title),
-      ),
-      if (!isBuiltIn)
+      if (!_archivedProfileKeys.contains(key))
+        _ProfileActionItem(
+          label: 'Load',
+          icon: Icons.download,
+          onPressed: () => _loadProfile(key: key, title: title),
+        ),
+      if (!isBuiltIn && !_archivedProfileKeys.contains(key))
         _ProfileActionItem(
           label: 'Overwrite with current settings',
           icon: Icons.save,
           onPressed: () => _overwriteProfile(key: key, title: title),
+        ),
+      if (!isBuiltIn)
+        _ProfileActionItem(
+          label: _archivedProfileKeys.contains(key) ? 'Restore' : 'Archive',
+          icon: _archivedProfileKeys.contains(key)
+              ? Icons.unarchive_outlined
+              : Icons.archive_outlined,
+          onPressed: () => _setProfileArchived(
+            key,
+            title,
+            !_archivedProfileKeys.contains(key),
+          ),
         ),
       if (!isBuiltIn)
         _ProfileActionItem(

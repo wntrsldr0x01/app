@@ -43,7 +43,8 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     Future<void> finishIo() async {
       await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 200)),);
+        () => Future<void>.delayed(const Duration(milliseconds: 200)),
+      );
       await tester.pumpAndSettle();
     }
 
@@ -52,11 +53,14 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 300));
     });
     await finishIo();
-    expect(find.text('pair.oe'), findsOneWidget,
-        reason: tester
-            .widgetList<Text>(find.byType(Text))
-            .map((t) => t.data)
-            .join(' | '),);
+    expect(
+      find.text('pair.oe'),
+      findsOneWidget,
+      reason: tester
+          .widgetList<Text>(find.byType(Text))
+          .map((t) => t.data)
+          .join(' | '),
+    );
     await tester.tap(find.byType(Checkbox));
     await tester.pump();
     await tester.runAsync(() => tester.tap(find.text('Archive selected')));
@@ -107,14 +111,94 @@ void main() {
       await Future<void>.delayed(const Duration(seconds: 1));
     });
     await tester.pumpAndSettle();
-    expect(find.text('2 imported · 1 already in library · 1 failed'),
-        findsOneWidget,);
+    expect(
+      find.text('2 imported · 1 already in library · 1 failed'),
+      findsOneWidget,
+    );
     expect(find.text('second.oe'), findsOneWidget);
     expect(find.text('third.oe'), findsOneWidget);
     expect(find.text('pair.oe'), findsOneWidget);
     expect(find.textContaining('broken.oe:'), findsOneWidget);
     await tester.runAsync(() async {
-      expect((await listOeOriginals()).length, 3);
+      final entries = await listOeOriginals();
+      expect(entries.length, 3);
+      final batch = entries.where((e) => e.name != 'pair.oe').toList();
+      expect(batch[0].sessionId, isNotNull);
+      expect(batch[0].sessionId, batch[1].sessionId);
+      expect(batch[0].importedAtUs, batch[1].importedAtUs);
+      expect(entries.singleWhere((e) => e.name == 'pair.oe').sessionId, isNull);
+      expect((await readOeAnnotations(entry.digest))['notes'], 'retain me');
+    });
+    expect(tester.takeException(), isNull);
+    final sessionTitle = tester
+        .widgetList<Text>(find.byType(Text))
+        .map((t) => t.data)
+        .whereType<String>()
+        .singleWhere((s) => s.startsWith('Import ') && !s.contains('.oe'));
+    await tester.tap(find.text(sessionTitle));
+    await tester.pumpAndSettle();
+    expect(find.text('second.oe'), findsNothing);
+    expect(find.text('pair.oe'), findsOneWidget);
+    await tester.tap(find.text(sessionTitle));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Select session').first);
+    await tester.pump();
+    expect(find.text('Compare selected logs (2)'), findsOneWidget);
+    await tester
+        .runAsync(() => tester.tap(find.byTooltip('Rename session').first));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Session name'),
+      'Reading practice',
+    );
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Save'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+    });
+    await tester.pumpAndSettle();
+    expect(find.text('Reading practice'), findsOneWidget);
+    await tester.runAsync(() async {
+      for (final entry
+          in (await listOeOriginals()).where((e) => e.sessionId != null)) {
+        expect(
+          (await readOeAnnotations(entry.digest))['session_name'],
+          'Reading practice',
+        );
+      }
+    });
+    await tester.runAsync(() => tester.tap(find.text('Merge sessions')));
+    await tester.pumpAndSettle();
+    expect(
+        tester
+            .widget<FilledButton>(find.widgetWithText(FilledButton, 'Merge'))
+            .onPressed,
+        isNull,);
+    await tester.tap(find.widgetWithText(CheckboxListTile, 'Reading practice'));
+    await tester.tap(find.widgetWithText(CheckboxListTile, 'Earlier imports'));
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Combined session name'),
+        'All readings',);
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Merge'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+    });
+    await tester.pumpAndSettle();
+    expect(find.text('All readings'), findsOneWidget);
+    expect(find.text('Reading practice'), findsNothing);
+    expect(find.text('Earlier imports'), findsNothing);
+    await tester.runAsync(() async {
+      final ids = <String>{};
+      for (final entry in await listOeOriginals()) {
+        final notes = await readOeAnnotations(entry.digest);
+        ids.add(notes['session_id']!);
+        expect(notes['session_name'], 'All readings');
+        await readOeOriginal(entry);
+      }
+      expect(ids.length, 1);
       expect((await readOeAnnotations(entry.digest))['notes'], 'retain me');
     });
     expect(tester.takeException(), isNull);

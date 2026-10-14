@@ -1,7 +1,48 @@
+import 'dart:io';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:open_wearable/view_models/sensor_configuration_storage.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+      'archive hides a profile without changing its payload and restore returns it',
+      () async {
+    final directory =
+        Directory.systemTemp.createTempSync('profile_archive_test');
+    const channel = MethodChannel('plugins.flutter.io/path_provider');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (_) async => directory.path);
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+      directory.deleteSync(recursive: true);
+    });
+    const key = 'name_ear__fw_2_2_9__step1';
+    const profile = {'Microphones': '48000 record'};
+    await SensorConfigurationStorage.saveConfiguration(key, profile);
+    final payload = File('${directory.path}/sensor_configurations/$key.json');
+    final original = await payload.readAsBytes();
+    await SensorConfigurationStorage.setArchived(key, true);
+    expect(await SensorConfigurationStorage.isArchived(key), isTrue);
+    expect(await SensorConfigurationStorage.listConfigurationKeys(), isEmpty);
+    expect(
+        await SensorConfigurationStorage.listConfigurationKeys(
+            includeArchived: true,),
+        [key],);
+    expect(await SensorConfigurationStorage.loadConfiguration(key), profile);
+    expect(await payload.readAsBytes(), original);
+    await SensorConfigurationStorage.setArchived(key, false);
+    expect(await SensorConfigurationStorage.listConfigurationKeys(), [key]);
+    await SensorConfigurationStorage.setArchived(key, true);
+    await SensorConfigurationStorage.deleteConfiguration(key);
+    expect(await SensorConfigurationStorage.isArchived(key), isFalse);
+    expect(
+        await SensorConfigurationStorage.listConfigurationKeys(
+            includeArchived: true,),
+        isEmpty,);
+  });
+
   group('SensorConfigurationStorage scope helpers', () {
     test('normalizes device names and firmware versions for scope keys', () {
       expect(

@@ -5,6 +5,7 @@ import 'dart:io'
 import 'package:flutter/foundation.dart';
 import 'package:logger/logger.dart';
 import 'package:path_provider/path_provider.dart';
+import 'recording_diagnostics.dart';
 
 class _CustomLibLogFilter extends LogFilter {
   _CustomLibLogFilter(this._minLevel);
@@ -15,6 +16,7 @@ class _CustomLibLogFilter extends LogFilter {
   bool shouldLog(LogEvent event) {
     if (event.level.index < _minLevel.index) return false;
 
+    if (event.level.index >= Level.warning.index) return true;
     final msg = event.message.toString();
 
     return !(msg.contains('componentData') ||
@@ -24,6 +26,25 @@ class _CustomLibLogFilter extends LogFilter {
         (msg.toLowerCase().contains('sensor data') &&
             event.level == Level.trace) ||
         (msg.toLowerCase().contains('parsed') && event.level == Level.trace));
+  }
+}
+
+class _RecordingLogOutput extends LogOutput {
+  final LogOutput delegate;
+  _RecordingLogOutput(this.delegate);
+  @override
+  Future<void> init() => delegate.init();
+  @override
+  Future<void> destroy() => delegate.destroy();
+  @override
+  void output(OutputEvent event) {
+    const prefix = 'RECORDING_DIAGNOSTIC ';
+    final message = event.origin.message;
+    if (message is String && message.startsWith(prefix)) {
+      delegate.output(
+        OutputEvent(event.origin, [message.substring(prefix.length)]),
+      );
+    }
   }
 }
 
@@ -92,7 +113,10 @@ class LogFileManager with ChangeNotifier {
 
     if (kDebugMode) {
       level = Level.trace;
-      printer = PrettyPrinter();
+      printer = PrettyPrinter(
+        colors: false,
+        dateTimeFormat: (time) => time.toUtc().toIso8601String(),
+      );
     } else {
       level = Level.debug;
       printer = LogfmtPrinter();
@@ -124,6 +148,20 @@ class LogFileManager with ChangeNotifier {
       );
 
       outputs.add(advanced);
+      final recordingDir = Directory('$logDirPath/recording');
+      await recordingDir.create(recursive: true);
+      outputs.add(
+        _RecordingLogOutput(
+          AdvancedFileOutput(
+            path: recordingDir.path,
+            latestFileName: 'recording-diagnostics.log',
+            maxFileSizeKB: 4096,
+            maxRotatedFilesCount: 20,
+            maxDelay: const Duration(milliseconds: 250),
+            writeImmediately: [Level.info, Level.warning, Level.error],
+          ),
+        ),
+      );
     }
 
     final sharedOutput = _SharedLogOutput(outputs);
@@ -163,6 +201,10 @@ class LogFileManager with ChangeNotifier {
 
     await Future.wait([logger.init, libLogger.init]);
 
+    RecordingDiagnostics.sink = logger.i;
+    RecordingDiagnostics.record('diagnostics_ready', {
+      'configuration_confirmation_is_not_sd_write_confirmation': true,
+    });
     return LogFileManager._(
       logger: logger,
       libLogger: libLogger,
@@ -181,7 +223,7 @@ class LogFileManager with ChangeNotifier {
     if (!await logDir.exists()) return [];
 
     final entities = await logDir
-        .list()
+        .list(recursive: true)
         .where((e) => e is File && e.path.endsWith('.log'))
         .toList();
 
@@ -217,6 +259,7 @@ class LogFileManager with ChangeNotifier {
 
   @override
   void dispose() {
+    RecordingDiagnostics.sink = null;
     unawaited(_logger.close());
     unawaited(_libLogger.close());
     super.dispose();

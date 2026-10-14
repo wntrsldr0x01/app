@@ -279,3 +279,17 @@ are retained even if others fail, and failures are listed with their filenames.
 SHA-256 duplicates are skipped without replacing existing names or annotations.
 A batch stays in the library and reports imported/duplicate/failed counts; one
 selected valid file still opens its viewer. Each file retains the 128 MiB limit.
+
+### Import sessions
+
+Each import batch groups its newly added recordings into a dated, collapsible session across List, Tiles, and Table views. Rename a session with its edit button; search includes that name. Select session selects the logs currently shown in that session, respecting search, ear, and archive filters, for the existing compare/archive actions. Duplicate files stay in their original session. Imports made before session tracking appear under Earlier imports because their original batch boundaries are unknown. Session identity and import time are stored alongside the index; renaming uses annotation sidecars and leaves original bytes unchanged. Recognized experiment filenames display profile, effort, paragraph, and take as readable titles.
+
+Use Merge sessions in the library toolbar to select two or more sessions and give the combined session a name. Merging includes all logs from the chosen sessions, even those hidden by archive, search, or ear filters. Notes, archive states, original batch metadata, and verified original files remain intact. The merged grouping persists in annotation sidecars.
+
+### Spectrograms
+
+Use View spectrogram on a recording channel to open a linear-frequency spectrogram, or choose Mel-spectrogram for microphone audio in Frequency analysis. Enter the known sample rate (the active rate is not reliably recorded), choose the first frame, FFT size, and window count, confirm the uniform timing assumption, and compute. Spectrograms use periodic Hann windows with 75% overlap, no padding or resampling, and power in dB relative to native units squared per Hz (mel displays band power). Hover to inspect window-center time, frequency, and power. Linear spectrograms support FFT sizes up to 4096 and 512 windows; display uses up to 256 frequency rows with peak aggregation, while Export analysis retains all bins and time-step metadata. Original recordings remain unchanged.
+
+### Listening while comparing
+
+Microphone panels in Compare logs include Play visible microphone, rate selection, pause/resume, stop, seek, and volume controls. The selected rate is shared across comparison panels, and only one channel plays at a time. Playback includes original samples from the first through last frame visible in that panel, in file order; packet gaps are omitted. Changing the comparison window or rate stops playback. Frequency analysis also offers Play analyzed range with the same controls and a playback marker on its spectrogram. Audio requires an explicit whole-number rate within 1–192000 Hz; analysis can use other rates without enabling playback.

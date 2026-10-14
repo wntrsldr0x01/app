@@ -360,7 +360,7 @@ class SensorConfigurationView extends StatelessWidget {
       }
 
       logger.d(
-        "Applied ${primaryEntriesToApply.length} primary and ${mirroredEntriesToApply.length} mirrored sensor settings for ${target.primaryDevice.name}",
+        "Requested ${primaryEntriesToApply.length} primary and ${mirroredEntriesToApply.length} mirrored sensor settings for ${target.primaryDevice.name}; hardware confirmation pending",
       );
     }
 

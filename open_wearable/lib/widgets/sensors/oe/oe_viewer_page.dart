@@ -1,3 +1,4 @@
+import 'oe_playback_source.dart';
 import 'oe_spectrum_page.dart';
 import 'dart:convert';
 import 'dart:async';
@@ -32,12 +33,16 @@ class _OeViewerPageState extends State<OeViewerPage> {
   AudioPlayer _ensurePlayer() {
     if (_player != null) return _player!;
     final player = _player = AudioPlayer();
-    _audioSubscriptions.add(player.onPositionChanged.listen((position) {
-      if (mounted) setState(() => _audioPosition = position);
-    }),);
-    _audioSubscriptions.add(player.onPlayerStateChanged.listen((state) {
-      if (mounted) setState(() => _audioState = state);
-    }),);
+    _audioSubscriptions.add(
+      player.onPositionChanged.listen((position) {
+        if (mounted) setState(() => _audioPosition = position);
+      }),
+    );
+    _audioSubscriptions.add(
+      player.onPlayerStateChanged.listen((state) {
+        if (mounted) setState(() => _audioState = state);
+      }),
+    );
     return player;
   }
 
@@ -168,9 +173,11 @@ class _OeViewerPageState extends State<OeViewerPage> {
         padding: const EdgeInsets.all(12),
         children: [
           FilledButton.icon(
-            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-              builder: (_) => OeTimelinePage(recording: r, name: widget.name),
-            ),),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => OeTimelinePage(recording: r, name: widget.name),
+              ),
+            ),
             icon: const Icon(Icons.stacked_line_chart),
             label: const Text('Compare sensors · shared time axis'),
           ),
@@ -300,7 +307,38 @@ class _OeViewerPageState extends State<OeViewerPage> {
             'Microphone display: signed int16 PCM, as used by the firmware. Its header may declare uint16. The table exposes both interpretations of the same bits. These counts are not calibrated sound pressure.',
           ),
       ]),
-      OutlinedButton.icon(onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => OeSpectrumPage(recording: widget.recording, name: widget.name, sensorId: s.id, channel: _channel, firstFrame: _first))), icon: const Icon(Icons.graphic_eq), label: const Text('FFT / audio mel-spectrogram')),
+      OutlinedButton.icon(
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => OeSpectrumPage(
+              recording: widget.recording,
+              name: widget.name,
+              sensorId: s.id,
+              channel: _channel,
+              firstFrame: _first,
+            ),
+          ),
+        ),
+        icon: const Icon(Icons.graphic_eq),
+        label: const Text('Frequency analysis'),
+      ),
+      OutlinedButton.icon(
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => OeSpectrumPage(
+              recording: widget.recording,
+              name: widget.name,
+              sensorId: s.id,
+              channel: _channel,
+              firstFrame: _first,
+              initialSpectrogram: true,
+              initialRate: _rate?.toDouble(),
+            ),
+          ),
+        ),
+        icon: const Icon(Icons.grid_on),
+        label: const Text('View spectrogram'),
+      ),
       if (s.isPcm)
         _card('Microphone playback · ${c.name}', [
           const Text(
@@ -347,8 +385,7 @@ class _OeViewerPageState extends State<OeViewerPage> {
                           if (!mounted) return;
                           final player = _ensurePlayer();
                           await player.setVolume(_volume);
-                          await player
-                              .play(BytesSource(bytes, mimeType: 'audio/wav'));
+                          await player.play(await oePlaybackSource(bytes));
                         }),
                 icon: const Icon(Icons.play_arrow),
                 label: const Text('Play selected channel'),
@@ -365,11 +402,14 @@ class _OeViewerPageState extends State<OeViewerPage> {
                             await _player?.resume();
                           }
                         }),
-                icon: Icon(_audioState == PlayerState.paused
-                    ? Icons.play_arrow
-                    : Icons.pause,),
+                icon: Icon(
+                  _audioState == PlayerState.paused
+                      ? Icons.play_arrow
+                      : Icons.pause,
+                ),
                 label: Text(
-                    _audioState == PlayerState.paused ? 'Resume' : 'Pause',),
+                  _audioState == PlayerState.paused ? 'Resume' : 'Pause',
+                ),
               ),
               TextButton(
                 onPressed: () => setState(_resetAudio),
@@ -426,21 +466,27 @@ class _OeViewerPageState extends State<OeViewerPage> {
                 ? null
                 : (seconds) => _action(() async {
                       await _player?.seek(
-                          Duration(microseconds: (seconds * 1e6).round()),);
+                        Duration(microseconds: (seconds * 1e6).round()),
+                      );
                     }),
           ),
-          Row(children: [
-            Text('Listening volume: ${(_volume * 100).round()}%'),
-            Expanded(
+          Row(
+            children: [
+              Text('Listening volume: ${(_volume * 100).round()}%'),
+              Expanded(
                 child: Slider(
-                    value: _volume,
-                    onChanged: (value) {
-                      setState(() => _volume = value);
-                      _player?.setVolume(value);
-                    },),),
-          ],),
+                  value: _volume,
+                  onChanged: (value) {
+                    setState(() => _volume = value);
+                    _player?.setVolume(value);
+                  },
+                ),
+              ),
+            ],
+          ),
           const Text(
-              'Listening volume affects speaker output only; exported PCM and chart values are unchanged.',),
+            'Listening volume affects speaker output only; exported PCM and chart values are unchanged.',
+          ),
         ]),
       _card(
           _rate == null
@@ -480,39 +526,41 @@ class _OeViewerPageState extends State<OeViewerPage> {
                         height: 260,
                         width: double.infinity,
                         child: LayoutBuilder(
-                            builder: (context, constraints) => MouseRegion(
-                                onExit: (_) =>
-                                    setState(() => _hoverFrame = null),
-                                onHover: (event) {
-                                  final fraction =
-                                      ((event.localPosition.dx - 78) /
-                                              math.max(
-                                                  1, constraints.maxWidth - 90,))
-                                          .clamp(0.0, 1.0);
-                                  setState(() => _hoverFrame = _start +
-                                      (fraction *
-                                              math.max(0, _end - _start - 1))
-                                          .round(),);
-                                },
-                                child: CustomPaint(
-                                  painter: _EnvelopePainter(
-                                    p,
-                                    _start,
-                                    _end,
-                                    Theme.of(context).colorScheme.primary,
-                                    rate: _rate,
-                                    cursorFrame: _hoverFrame ??
-                                        (s.isPcm &&
-                                                _rate != null &&
-                                                _audioState !=
-                                                    PlayerState.stopped
-                                            ? (_audioPosition.inMicroseconds /
-                                                    1e6 *
-                                                    _rate!)
-                                                .floor()
-                                            : null),
-                                  ),
-                                ),),),
+                          builder: (context, constraints) => MouseRegion(
+                            onExit: (_) => setState(() => _hoverFrame = null),
+                            onHover: (event) {
+                              final fraction = ((event.localPosition.dx - 78) /
+                                      math.max(
+                                        1,
+                                        constraints.maxWidth - 90,
+                                      ))
+                                  .clamp(0.0, 1.0);
+                              setState(
+                                () => _hoverFrame = _start +
+                                    (fraction * math.max(0, _end - _start - 1))
+                                        .round(),
+                              );
+                            },
+                            child: CustomPaint(
+                              painter: _EnvelopePainter(
+                                p,
+                                _start,
+                                _end,
+                                Theme.of(context).colorScheme.primary,
+                                rate: _rate,
+                                cursorFrame: _hoverFrame ??
+                                    (s.isPcm &&
+                                            _rate != null &&
+                                            _audioState != PlayerState.stopped
+                                        ? (_audioPosition.inMicroseconds /
+                                                1e6 *
+                                                _rate!)
+                                            .floor()
+                                        : null),
+                              ),
+                            ),
+                          ),
+                        ),
                       ),
                     ],
                   ],
@@ -523,39 +571,45 @@ class _OeViewerPageState extends State<OeViewerPage> {
                 _hoverFrame! >= _start &&
                 _hoverFrame! < _end)
               SelectableText(
-                  'Frame $_hoverFrame · ${c.label}: ${widget.recording.value(s, widget.recording.packetForFrame(s, _hoverFrame!), _hoverFrame! - widget.recording.packetForFrame(s, _hoverFrame!).firstFrame, _channel)} ${s.isPcm ? "signed PCM counts" : c.unit} · packet timestamp ${widget.recording.packetForFrame(s, _hoverFrame!).timestampUs} µs',),
-            Wrap(spacing: 8, children: [
-              TextButton(
-                  onPressed: () => setState(() {
-                        _zoom = 1;
-                        _position = 0;
-                        _hoverFrame = null;
-                        _refreshPlot();
-                      }),
-                  child: const Text('Fit entire recording'),),
-              TextButton(
-                  onPressed: () => setState(() {
-                        _zoom = math.max(1, s.frameCount / 300);
-                        _hoverFrame = null;
-                        _refreshPlot();
-                      }),
-                  child: const Text('Inspect 300 samples'),),
-              if (s.isPcm && _rate != null)
+                'Frame $_hoverFrame · ${c.label}: ${widget.recording.value(s, widget.recording.packetForFrame(s, _hoverFrame!), _hoverFrame! - widget.recording.packetForFrame(s, _hoverFrame!).firstFrame, _channel)} ${s.isPcm ? "signed PCM counts" : c.unit} · packet timestamp ${widget.recording.packetForFrame(s, _hoverFrame!).timestampUs} µs',
+              ),
+            Wrap(
+              spacing: 8,
+              children: [
                 TextButton(
+                  onPressed: () => setState(() {
+                    _zoom = 1;
+                    _position = 0;
+                    _hoverFrame = null;
+                    _refreshPlot();
+                  }),
+                  child: const Text('Fit entire recording'),
+                ),
+                TextButton(
+                  onPressed: () => setState(() {
+                    _zoom = math.max(1, s.frameCount / 300);
+                    _hoverFrame = null;
+                    _refreshPlot();
+                  }),
+                  child: const Text('Inspect 300 samples'),
+                ),
+                if (s.isPcm && _rate != null)
+                  TextButton(
                     onPressed: () => setState(() {
-                          _zoom = math.max(1, s.frameCount / (_rate! * 5));
-                          final frame =
-                              (_audioPosition.inMicroseconds / 1e6 * _rate!)
-                                  .floor();
-                          _position = s.frameCount == _window
-                              ? 0
-                              : (frame / (s.frameCount - _window))
-                                  .clamp(0.0, 1.0);
-                          _hoverFrame = null;
-                          _refreshPlot();
-                        }),
-                    child: const Text('View 5 s at playback position'),),
-            ],),
+                      _zoom = math.max(1, s.frameCount / (_rate! * 5));
+                      final frame =
+                          (_audioPosition.inMicroseconds / 1e6 * _rate!)
+                              .floor();
+                      _position = s.frameCount == _window
+                          ? 0
+                          : (frame / (s.frameCount - _window)).clamp(0.0, 1.0);
+                      _hoverFrame = null;
+                      _refreshPlot();
+                    }),
+                    child: const Text('View 5 s at playback position'),
+                  ),
+              ],
+            ),
             Text('Zoom: ${_zoom.toStringAsFixed(0)}×'),
             Slider(
               value: math.log(_zoom) / math.ln10,
@@ -688,8 +742,14 @@ class _EnvelopePainter extends CustomPainter {
   final int start, end;
   final Color color;
   final int? rate, cursorFrame;
-  _EnvelopePainter(this.plot, this.start, this.end, this.color,
-      {this.rate, this.cursorFrame,});
+  _EnvelopePainter(
+    this.plot,
+    this.start,
+    this.end,
+    this.color, {
+    this.rate,
+    this.cursorFrame,
+  });
   @override
   void paint(Canvas canvas, Size size) {
     const left = 78.0, top = 12.0, bottom = 28.0;
@@ -704,8 +764,11 @@ class _EnvelopePainter extends CustomPainter {
     for (var tick = 0; tick <= 4; tick++) {
       final fraction = tick / 4;
       final v = min * (1 - fraction) + max * fraction;
-      canvas.drawLine(Offset(left, y(v)), Offset(left + w, y(v)),
-          Paint()..color = color.withValues(alpha: .12),);
+      canvas.drawLine(
+        Offset(left, y(v)),
+        Offset(left + w, y(v)),
+        Paint()..color = color.withValues(alpha: .12),
+      );
       final label = TextPainter(
         text: TextSpan(
           text: v.toStringAsPrecision(5),
@@ -747,30 +810,38 @@ class _EnvelopePainter extends CustomPainter {
       final fraction = tick / 4;
       final frame = start + (math.max(0, end - start - 1) * fraction).round();
       final x = left + fraction * w;
-      canvas.drawLine(Offset(x, top), Offset(x, top + h),
-          Paint()..color = color.withValues(alpha: .12),);
+      canvas.drawLine(
+        Offset(x, top),
+        Offset(x, top + h),
+        Paint()..color = color.withValues(alpha: .12),
+      );
       final label = TextPainter(
-          text: TextSpan(
-              text: rate == null
-                  ? '$frame'
-                  : '${(frame / rate!).toStringAsFixed(3)} s',
-              style: TextStyle(color: color, fontSize: 10),),
-          textDirection: TextDirection.ltr,)
-        ..layout();
+        text: TextSpan(
+          text: rate == null
+              ? '$frame'
+              : '${(frame / rate!).toStringAsFixed(3)} s',
+          style: TextStyle(color: color, fontSize: 10),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
       label.paint(
-          canvas,
-          Offset((x - label.width / 2).clamp(0, size.width - label.width),
-              size.height - bottom + 6,),);
+        canvas,
+        Offset(
+          (x - label.width / 2).clamp(0, size.width - label.width),
+          size.height - bottom + 6,
+        ),
+      );
     }
     if (cursorFrame != null && cursorFrame! >= start && cursorFrame! < end) {
       final x =
           left + (cursorFrame! - start) / math.max(1, end - start - 1) * w;
       canvas.drawLine(
-          Offset(x, top),
-          Offset(x, top + h),
-          Paint()
-            ..color = color
-            ..strokeWidth = 2,);
+        Offset(x, top),
+        Offset(x, top + h),
+        Paint()
+          ..color = color
+          ..strokeWidth = 2,
+      );
     }
   }
 

@@ -4,6 +4,16 @@ class OeLibraryEntry {
   final int size;
   final int? timestampUs, side;
   final String? deviceId;
-  const OeLibraryEntry(this.name, this.digest, this.size,
-      {this.timestampUs, this.side, this.deviceId,});
+  final String? sessionId;
+  final int? importedAtUs;
+  const OeLibraryEntry(
+    this.name,
+    this.digest,
+    this.size, {
+    this.timestampUs,
+    this.side,
+    this.deviceId,
+    this.sessionId,
+    this.importedAtUs,
+  });
 }

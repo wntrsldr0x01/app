@@ -1,4 +1,7 @@
+import 'oe_playback_source.dart';
 import 'oe_workspace.dart';
+import 'dart:async';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:open_wearable/models/oe/oe_pairing.dart';
 import 'package:open_wearable/models/oe/oe_metadata.dart';
 import 'dart:math' as math;
@@ -19,8 +22,11 @@ class OeComparisonLog {
 class OeLogComparisonPage extends StatefulWidget {
   final List<OeComparisonLog> logs;
   final bool leftRight;
-  const OeLogComparisonPage(
-      {super.key, required this.logs, this.leftRight = false,});
+  const OeLogComparisonPage({
+    super.key,
+    required this.logs,
+    this.leftRight = false,
+  });
   @override
   State<OeLogComparisonPage> createState() => _OeLogComparisonPageState();
 }
@@ -37,6 +43,59 @@ class _OeLogComparisonPageState extends State<OeLogComparisonPage> {
   double? _cursor;
   String? _error;
   int _generation = 0;
+  AudioPlayer? _player;
+  final List<StreamSubscription<dynamic>> _audioSubscriptions = [];
+  PlayerState _audioState = PlayerState.stopped;
+  Duration _audioPosition = Duration.zero;
+  String? _playingChannel;
+  String? _audioError;
+  int? _audioRate;
+  int _audioGeneration = 0;
+  bool _audioBusy = false;
+  double _volume = 1, _audioDuration = 0;
+
+  AudioPlayer _ensurePlayer() {
+    if (_player != null) return _player!;
+    final player = _player = AudioPlayer();
+    _audioSubscriptions.add(
+      player.onPositionChanged.listen((value) {
+        if (mounted) setState(() => _audioPosition = value);
+      }),
+    );
+    _audioSubscriptions.add(
+      player.onPlayerStateChanged.listen((value) {
+        if (mounted) setState(() => _audioState = value);
+      }),
+    );
+    return player;
+  }
+
+  Future<void> _audioAction(Future<void> Function() action) async {
+    setState(() {
+      _audioBusy = true;
+      _audioError = null;
+    });
+    try {
+      await action().timeout(const Duration(seconds: 20));
+    } catch (error) {
+      if (mounted) setState(() => _audioError = 'Playback failed: $error');
+    } finally {
+      if (mounted) setState(() => _audioBusy = false);
+    }
+  }
+
+  Future<void> _stopAudio() async {
+    ++_audioGeneration;
+    await _player?.stop();
+    if (mounted) {
+      setState(() {
+        _audioPosition = Duration.zero;
+        _audioState = PlayerState.stopped;
+        _playingChannel = null;
+      });
+    }
+  }
+
   int get _origin => widget.logs.map((l) => l.bounds.originUs).reduce(math.min);
   double shift(int i) =>
       (_clock ? (widget.logs[i].bounds.originUs - _origin) / 1e6 : 0) +
@@ -63,6 +122,11 @@ class _OeLogComparisonPageState extends State<OeLogComparisonPage> {
 
   @override
   void dispose() {
+    ++_audioGeneration;
+    for (final subscription in _audioSubscriptions) {
+      unawaited(subscription.cancel());
+    }
+    unawaited(_player?.dispose());
     _startField.dispose();
     _endField.dispose();
     for (final c in _offsetFields) {
@@ -82,6 +146,7 @@ class _OeLogComparisonPageState extends State<OeLogComparisonPage> {
   }
 
   Future<void> _refresh() async {
+    unawaited(_audioAction(_stopAudio));
     final generation = ++_generation;
     _plots = null;
     _busy = true;
@@ -137,12 +202,16 @@ class _OeLogComparisonPageState extends State<OeLogComparisonPage> {
             children: [
               if (widget.leftRight)
                 Card(
-                    child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: SelectableText(OePairing.assess(
-                          widget.logs[0].recording, widget.logs[1].recording,)
-                      .description,),
-                ),),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: SelectableText(
+                      OePairing.assess(
+                        widget.logs[0].recording,
+                        widget.logs[1].recording,
+                      ).description,
+                    ),
+                  ),
+                ),
               const Text(
                 'Shared time window · original values · separate panels for every channel. No resampling or automatic clock synchronization.',
               ),
@@ -525,7 +594,162 @@ class _OeLogComparisonPageState extends State<OeLogComparisonPage> {
         Text(
           '${series.finiteCount} finite samples · ${series.nonFiniteCount} non-finite excluded from display${binIndex == null ? "" : cursorBins.isEmpty ? " · cursor bin: no samples" : " · cursor bin: min ${cursorBins.first.min}, max ${cursorBins.first.max}, ${cursorBins.first.count} samples, frames ${cursorBins.first.firstFrame}–${cursorBins.first.lastFrame}"}',
         ),
+        if (sensor.isPcm) _microphonePlayback(i, series),
         const Divider(),
+      ],
+    );
+  }
+
+  Widget _microphonePlayback(int i, OeTimeSeries series) {
+    final key = '$i:${series.sensorId}:${series.channel}';
+    final active = _playingChannel == key;
+    final running = active &&
+        (_audioState == PlayerState.playing ||
+            _audioState == PlayerState.paused);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            SizedBox(
+              width: 210,
+              child: DropdownButtonFormField<int>(
+                key: ValueKey('comparison-rate-$key-$_audioRate'),
+                initialValue: _audioRate,
+                decoration:
+                    const InputDecoration(labelText: 'Playback rate (Hz)'),
+                items: [
+                  for (final rate in [
+                    8000,
+                    16000,
+                    24000,
+                    32000,
+                    44100,
+                    48000,
+                    96000,
+                  ])
+                    DropdownMenuItem(value: rate, child: Text('$rate Hz')),
+                ],
+                onChanged: _audioBusy
+                    ? null
+                    : (rate) => _audioAction(() async {
+                          await _stopAudio();
+                          if (mounted) setState(() => _audioRate = rate);
+                        }),
+              ),
+            ),
+            FilledButton.icon(
+              onPressed: _audioRate == null ||
+                      _audioBusy ||
+                      _busy ||
+                      series.bins.isEmpty
+                  ? null
+                  : () => _audioAction(() async {
+                        await _stopAudio();
+                        final generation = _audioGeneration;
+                        final first = series.bins
+                            .map((b) => b.firstFrame)
+                            .reduce(math.min);
+                        final last = series.bins
+                            .map((b) => b.lastFrame)
+                            .reduce(math.max);
+                        final bytes = await compute(
+                          _comparisonWav,
+                          (
+                            widget.logs[i].recording,
+                            series.sensorId,
+                            series.channel,
+                            _audioRate!,
+                            first,
+                            last - first + 1
+                          ),
+                        );
+                        if (!mounted || generation != _audioGeneration) return;
+                        final player = _ensurePlayer();
+                        setState(() {
+                          _playingChannel = key;
+                          _audioDuration = (last - first + 1) / _audioRate!;
+                        });
+                        await player.setVolume(_volume);
+                        await player.play(await oePlaybackSource(bytes));
+                      }),
+              icon: const Icon(Icons.play_arrow),
+              label: const Text('Play visible microphone'),
+            ),
+            TextButton.icon(
+              onPressed: !running || _audioBusy
+                  ? null
+                  : () => _audioAction(() async {
+                        if (_audioState == PlayerState.playing) {
+                          await _player?.pause();
+                        } else {
+                          await _player?.resume();
+                        }
+                      }),
+              icon: Icon(
+                active && _audioState == PlayerState.paused
+                    ? Icons.play_arrow
+                    : Icons.pause,
+              ),
+              label: Text(
+                active && _audioState == PlayerState.paused
+                    ? 'Resume'
+                    : 'Pause',
+              ),
+            ),
+            TextButton.icon(
+              onPressed:
+                  !active || _audioBusy ? null : () => _audioAction(_stopAudio),
+              icon: const Icon(Icons.stop),
+              label: const Text('Stop'),
+            ),
+          ],
+        ),
+        const Text(
+          'Choose the known microphone rate. Plays the visible frame range in file order; packet gaps are omitted. One channel plays at a time.',
+        ),
+        if (_audioBusy) const LinearProgressIndicator(),
+        if (_audioError != null)
+          SelectableText(_audioError!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),),
+        if (active) ...[
+          Text(
+            'Playback: ${_audioState.name} · ${(_audioPosition.inMicroseconds / 1e6).toStringAsFixed(2)} / ${_audioDuration.toStringAsFixed(2)} s',
+          ),
+          Slider(
+            value: (_audioPosition.inMicroseconds / 1e6)
+                .clamp(0.0, _audioDuration),
+            max: _audioDuration,
+            onChanged: !running || _audioBusy
+                ? null
+                : (value) => _audioAction(() async {
+                      await _player
+                          ?.seek(Duration(microseconds: (value * 1e6).round()));
+                    }),
+          ),
+          Row(
+            children: [
+              const Icon(Icons.volume_up),
+              Expanded(
+                child: Slider(
+                  value: _volume,
+                  onChanged: _audioBusy
+                      ? null
+                      : (value) {
+                          setState(() => _volume = value);
+                          unawaited(
+                            _audioAction(() => _player!.setVolume(value)),
+                          );
+                        },
+                ),
+              ),
+            ],
+          ),
+        ],
       ],
     );
   }
@@ -615,3 +839,12 @@ class _ComparisonPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _ComparisonPainter old) => true;
 }
+
+Uint8List _comparisonWav((OeRecording, int, int, int, int, int) args) =>
+    args.$1.wav(
+      args.$1.sensors[args.$2]!,
+      args.$3,
+      args.$4,
+      firstFrame: args.$5,
+      frameCount: args.$6,
+    );

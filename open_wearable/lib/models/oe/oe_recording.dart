@@ -249,17 +249,22 @@ class OeRecording {
 
   /// Derived WAV: explicit user rate; original mono PCM bits in packet order.
   /// Packet gaps are NOT filled and timestamps are NOT represented in a WAV.
-  Uint8List wav(OeSensor sensor, int channel, int rate) {
+  Uint8List wav(OeSensor sensor, int channel, int rate,
+      {int firstFrame = 0, int? frameCount,}) {
+    final count = frameCount ?? sensor.frameCount - firstFrame;
     if (!sensor.isPcm ||
         channel < 0 ||
         channel >= 2 ||
         rate < 1 ||
-        rate > 192000) {
+        rate > 192000 ||
+        firstFrame < 0 ||
+        count < 1 ||
+        firstFrame + count > sensor.frameCount) {
       throw ArgumentError(
         'WAV requires a known PCM channel and rate 1–192000 Hz',
       );
     }
-    final output = Uint8List(44 + sensor.frameCount * 2);
+    final output = Uint8List(44 + count * 2);
     final d = ByteData.sublistView(output);
     void text(int pos, String s) =>
         output.setRange(pos, pos + s.length, ascii.encode(s));
@@ -279,6 +284,8 @@ class OeRecording {
     var pos = 44;
     for (final p in sensor.packets) {
       for (var f = 0; f < p.frames; f++) {
+        final index = p.firstFrame + f;
+        if (index < firstFrame || index >= firstFrame + count) continue;
         final src = p.payloadOffset +
             f * sensor.frameSize +
             sensor.components[channel].offset;

@@ -60,8 +60,8 @@ void main() {
       );
       expect(
         rotations,
-        hasLength(1),
-        reason: 'One output needs one rotation lifecycle',
+        hasLength(2),
+        reason: 'General and recording outputs each need one shared lifecycle',
       );
       manager!.dispose();
       await Future.wait(
@@ -74,9 +74,14 @@ void main() {
       );
       final files = await manager!.logFiles;
       expect(
-        files,
+        files.where((file) => file.parent.path == manager!.logDirectoryPath),
         hasLength(2),
         reason: 'Keep one rotated file and latest.log',
+      );
+      expect(
+        files.where((file) => file.path.endsWith('recording-diagnostics.log')),
+        hasLength(1),
+        reason: 'Keep the separate recording diagnostics output',
       );
       final contents =
           (await Future.wait(files.map((file) => file.readAsString()))).join();

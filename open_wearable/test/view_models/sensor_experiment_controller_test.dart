@@ -4,6 +4,33 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:open_wearable/view_models/sensor_experiment_controller.dart';
 
 void main() {
+  test('disconnect disposal does not duplicate a pending shutdown', () {
+    fakeAsync((time) {
+      final controller = SensorExperimentController();
+      final shutdown = Completer<void>();
+      var offCalls = 0;
+      unawaited(
+        controller.start([
+          SensorExperimentStage(
+            'record',
+            const Duration(seconds: 1),
+            () async {},
+          ),
+        ], () {
+          offCalls++;
+          return shutdown.future;
+        }),
+      );
+      time.flushMicrotasks();
+      time.elapse(const Duration(seconds: 1));
+      expect(offCalls, 1);
+      controller.dispose();
+      expect(offCalls, 1);
+      shutdown.complete();
+      time.flushMicrotasks();
+      expect(controller.running, isFalse);
+    });
+  });
   test('times confirmed profiles, shifts profiles, then turns Off', () {
     fakeAsync((time) {
       final controller = SensorExperimentController();
@@ -47,7 +74,10 @@ void main() {
         controller.start(
           [
             SensorExperimentStage(
-                'first', const Duration(seconds: 1), () => confirmation.future,),
+              'first',
+              const Duration(seconds: 1),
+              () => confirmation.future,
+            ),
           ],
           () async {
             offCalls++;
